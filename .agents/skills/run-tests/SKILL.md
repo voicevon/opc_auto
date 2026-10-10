@@ -1,30 +1,31 @@
 ---
 name: run-tests
-description: Run the spatial_vision unit test suite (unittest) and verify results and working-tree cleanliness. Use after any code change, refactor, or before declaring a task done.
+description: 自动化测试与工作区清洁度验证协议。规范单元测试运行、冒烟回归及测试隔离性校验，杜绝测试污染与脏配置混入。
 ---
 
-# Run Tests Protocol
+# 自动化测试与验证协议 (Run Tests Protocol)
 
-## 1. 命令
+## 一、 执行命令
 
-- 单文件：`python -m unittest tests/test_xxx.py`
-- 全量回归：`python -m unittest discover tests`（约 1 分钟，需用后台模式运行并等待完成通知，不要轮询刷屏）
-- 工作目录必须是项目根目录 `spatial_vision/`。
+- 单文件测试：`python -m unittest tests/test_xxx.py`
+- 全量回归测试：`python -m unittest discover tests`（以非阻塞方式运行并等待完成通知，严禁无脑轮询）
+- 执行目录必须为项目根目录。
 
-## 2. 结果判定
+## 二、 结果判定准则
 
-- 以输出末尾的 `Ran N tests ... OK` 为准；出现 `FAILED` / `ERROR` 必须定位并修复，禁止通过删除或弱化断言来“变绿”。
-- 日志里的 `[ERROR]` / `[WARNING]` 行不等于失败（部分用例会故意触发，如锚点几何冲突），以 unittest 汇总结论为准。
-- Windows 控制台为 GBK，日志中文可能显示乱码，属显示问题，不影响判定；需要读中文时查看后台任务的 log 文件。
+- 以输出末尾的 `Ran N tests ... OK` 为准；出现 `FAILED` 或 `ERROR` 必须定位并修复，严禁通过删除或弱化断言来伪造测试通过。
+- 日志中的 `[ERROR]` 或 `[WARNING]` 行不等于用例失败（部分异常用例会主动触发错误分支），以测试框架最终汇总结论为准。
+- Windows 终端编码问题导致的偶发乱码不影响断言逻辑判定。
 
-## 3. 跑完后的工作区清洁检查（必做）
+## 三、 测试后工作区清洁检查（必须执行）
 
-1. 执行 `git status -s`，确认改动仅包含本次任务预期的文件。
-2. 若 `config/gui_settings.json` 等运行时配置被改动，说明某个测试写了真实配置，属于**测试隔离缺陷**：
-   - 先 `git checkout config/gui_settings.json` 还原；
-   - 再定位并修复该测试（用 `patch.object` 将模块级 `GUI_SETTINGS_FILE` 重定向到临时目录），不要把这类改动混入提交。
-3. 临时脚本只能放在 `temp/`（见 AGENTS.md），用完即删。
+1. 执行 `git status -s`，确认改动仅包含本次任务预期的源码与测试文件。
+2. 核查运行时配置文件（如数据库或业务配置）是否被测试污染：
+   - 若被污染，说明测试缺乏隔离性，必须使用模拟（Mock）或临时环境隔离；
+   - 必须先还原脏配置，严禁将测试脏数据混入工作区。
+3. 一次性测试与诊断脚本只能存放在 `temp/`（严格遵守 [AGENTS.md](file:///d:/Software/opc_auto/AGENTS.md) 准则），用完即弃。
 
-## 4. 新增/修改功能时
+## 四、 测试编写规范
 
-- 新功能、边界条件、Bug 修复必须附带单测；测试依赖的文件、目录一律使用 `tempfile`，严禁依赖真实 `data/` 或 `config/` 内容。
+- 新增业务特性、边界条件或 Bug 修复必须补齐自动化单元测试。
+- 测试过程中产生的易失文件严禁污染生产目录。

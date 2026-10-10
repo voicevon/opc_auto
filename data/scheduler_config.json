@@ -1,0 +1,24 @@
+{
+  "enabled": true,
+  "harvest_trigger_time": "01:00",
+  "heal_trigger_time": "05:00",
+  "preset_options": [
+    {
+      "label": "凌晨 01:00 (推荐低峰)",
+      "time": "01:00"
+    },
+    {
+      "label": "晚上 20:00 (8点)",
+      "time": "20:00"
+    },
+    {
+      "label": "晚上 21:00 (9点)",
+      "time": "21:00"
+    }
+  ],
+  "last_harvest_date": "",
+  "last_heal_date": "",
+  "updated_at": "2026-10-10T19:18:47.419334",
+  "next_run_full": "2026-10-11 01:30:00",
+  "trigger_time": "01:30"
+}

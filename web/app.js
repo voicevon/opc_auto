@@ -300,27 +300,47 @@ async function openAuditLog() {
   }
 }
 
-// 11. 定时巡检配置 (支持 19:00, 21:00 等随时修改)
+// 11. 定时巡检配置 (完全由后端 SSOT 单一真理源动态数据驱动)
 async function openSchedulerModal() {
   try {
     const res = await fetch("/api/config/scheduler");
     const cfg = await res.json();
     document.getElementById("sched-enabled").checked = cfg.enabled !== false;
-    document.getElementById("sched-time").value = cfg.trigger_time || "21:00";
-    document.getElementById("sched-next-run-text").innerText = 
-      `预计下次自动触发：${cfg.next_run_full || (cfg.trigger_time + ' (每日)')}`;
+    const currentHarvestTime = cfg.harvest_trigger_time || cfg.trigger_time || "";
+    document.getElementById("sched-time").value = currentHarvestTime;
+
+    // 动态渲染快捷选项 (绝不在前端写死)
+    const presetContainer = document.getElementById("sched-preset-container");
+    if (presetContainer && cfg.preset_options) {
+      presetContainer.innerHTML = "";
+      cfg.preset_options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const isCurrent = (opt.time === currentHarvestTime);
+        btn.className = isCurrent ? "btn btn-primary" : "btn btn-secondary";
+        btn.style.flex = "1";
+        btn.style.padding = "6px";
+        btn.innerText = opt.label;
+        btn.onclick = () => {
+          document.getElementById("sched-time").value = opt.time;
+          Array.from(presetContainer.children).forEach(b => b.className = "btn btn-secondary");
+          btn.className = "btn btn-primary";
+        };
+        presetContainer.appendChild(btn);
+      });
+    }
+
+    document.getElementById("sched-next-run-text").innerHTML = 
+      `<div>🌙 业务采集触发：<b>${cfg.next_run_full || (currentHarvestTime + ' (每日)')}</b></div>` +
+      `<div style="margin-top:4px; opacity:0.85;">🤖 AI自愈复盘时钟：<b>每日 ${cfg.heal_trigger_time || '05:00'}</b> (分析自己)</div>`;
   } catch (e) {
-    console.error("加载定时配置失败:", e);
+    console.error("加载真理源定时配置失败:", e);
   }
   document.getElementById("scheduler-modal").classList.add("show");
 }
 
 function closeSchedulerModal() {
   document.getElementById("scheduler-modal").classList.remove("show");
-}
-
-function setQuickTime(val) {
-  document.getElementById("sched-time").value = val;
 }
 
 async function saveSchedulerConfig(e) {

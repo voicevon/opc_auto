@@ -297,12 +297,9 @@
 
           <div style="margin-bottom: 16px;">
             <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:8px;">每日执行时间设定 (24小时制 HH:MM) *</label>
-            <div style="display:flex; gap:8px; margin-bottom:10px;">
-              <button type="button" class="btn btn-secondary" onclick="setQuickTime('19:00')" style="flex:1; padding:6px;">晚上 19:00 (7点)</button>
-              <button type="button" class="btn btn-secondary" onclick="setQuickTime('20:00')" style="flex:1; padding:6px;">晚上 20:00 (8点)</button>
-              <button type="button" class="btn btn-secondary" onclick="setQuickTime('21:00')" style="flex:1; padding:6px;">晚上 21:00 (9点)</button>
-            </div>
-            <input type="time" id="sched-time" required value="21:00" style="width:100%; padding:10px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color); font-size:16px;">
+            <!-- 纯数据驱动：快捷选项由后端 SSOT 真理源 API 动态加载渲染 -->
+            <div id="sched-preset-container" style="display:flex; gap:8px; margin-bottom:10px;"></div>
+            <input type="time" id="sched-time" required style="width:100%; padding:10px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color); font-size:16px;">
           </div>
 
           <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 10px; font-size: 12px; color: #93c5fd; margin-bottom: 16px;">

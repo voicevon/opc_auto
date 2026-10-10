@@ -3,71 +3,94 @@ OPC Auto 后台定时调度器 (24/7 Built-in Background Scheduler)
 支持动态配置执行时间 (如 19:00, 21:00)，独立守护线程运行
 """
 
+import os
+import json
 import threading
 import time
 from datetime import datetime, timedelta
-from .database import get_db_connection
+from typing import Optional
 from .audit_service import execute_daily_audit
 
-# 全局调度配置与状态
+# 单一真理源 (SSOT) 配置文件路径
+SCHEDULER_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "scheduler_config.json"))
+
 class SchedulerManager:
-    def __init__(self):
+    """
+    后台定时双时钟调度管理器。
+    彻底摒弃散落硬编码，完全基于 data/scheduler_config.json 单一真理源驱动。
+    """
+    def __init__(self, config_path: str = SCHEDULER_CONFIG_PATH):
         self.lock = threading.Lock()
+        self.config_path = config_path
         self.is_running = False
         self.worker_thread = None
-        self._init_config_table()
+        self._ensure_config_exists()
 
-    def _init_config_table(self):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS scheduler_config (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            enabled INTEGER DEFAULT 1,
-            trigger_time TEXT NOT NULL DEFAULT '21:00',
-            last_run_date TEXT DEFAULT '',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-        # 确保有一条默认记录
-        cursor.execute("SELECT count(*) as c FROM scheduler_config")
-        if cursor.fetchone()["c"] == 0:
-            cursor.execute("INSERT INTO scheduler_config (enabled, trigger_time) VALUES (1, '21:00')")
-        conn.commit()
-        conn.close()
+    def _ensure_config_exists(self):
+        """确保真理源文件就绪"""
+        if not os.path.exists(self.config_path):
+            default_cfg = {
+                "enabled": True,
+                "harvest_trigger_time": "01:00",
+                "heal_trigger_time": "05:00",
+                "preset_options": [
+                    {"label": "凌晨 01:00 (推荐低峰)", "time": "01:00"},
+                    {"label": "晚上 20:00 (8点)", "time": "20:00"},
+                    {"label": "晚上 21:00 (9点)", "time": "21:00"}
+                ],
+                "last_harvest_date": "",
+                "last_heal_date": "",
+                "updated_at": datetime.now().isoformat()
+            }
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(default_cfg, f, ensure_ascii=False, indent=2)
 
     def get_config(self):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM scheduler_config ORDER BY id DESC LIMIT 1")
-        row = cursor.fetchone()
-        conn.close()
-        if not row:
-            return {"enabled": True, "trigger_time": "21:00", "last_run_date": "", "next_run": "21:00"}
-        
-        cfg = dict(row)
-        cfg["enabled"] = bool(cfg["enabled"])
-        
-        # 计算下次执行时间
+        """从真理源读取配置并动态计算下次触发时序"""
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            self._ensure_config_exists()
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        # 动态计算下次业务采集触发时间
+        harvest_time = cfg.get("harvest_trigger_time", "01:00")
         now = datetime.now()
-        target_h, target_m = map(int, cfg["trigger_time"].split(":"))
+        target_h, target_m = map(int, harvest_time.split(":"))
         target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
         if target_dt <= now:
             target_dt += timedelta(days=1)
         cfg["next_run_full"] = target_dt.strftime("%Y-%m-%d %H:%M:%S")
+        cfg["trigger_time"] = harvest_time  # 向前兼容旧前端字段
         return cfg
 
-    def update_config(self, enabled: bool, trigger_time: str):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-        UPDATE scheduler_config 
-        SET enabled = ?, trigger_time = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = (SELECT id FROM scheduler_config ORDER BY id DESC LIMIT 1)
-        """, (1 if enabled else 0, trigger_time.strip()))
-        conn.commit()
-        conn.close()
-        return self.get_config()
+    def update_config(self, enabled: bool, harvest_time: str, heal_time: Optional[str] = None):
+        """更新真理源配置"""
+        with self.lock:
+            cfg = self.get_config()
+            cfg["enabled"] = bool(enabled)
+            cfg["harvest_trigger_time"] = harvest_time.strip()
+            if heal_time:
+                cfg["heal_trigger_time"] = heal_time.strip()
+            cfg["updated_at"] = datetime.now().isoformat()
+
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            return self.get_config()
+
+    def record_run(self, run_type: str, date_str: str):
+        """记录最后执行时间至真理源"""
+        with self.lock:
+            cfg = self.get_config()
+            if run_type == "harvest":
+                cfg["last_harvest_date"] = date_str
+            elif run_type == "heal":
+                cfg["last_heal_date"] = date_str
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
 
     def start(self):
         with self.lock:
@@ -82,34 +105,28 @@ class SchedulerManager:
             self.is_running = False
 
     def _run_loop(self):
-        """24小时不间断常驻轮询检测：支持业务采集钟与深夜自愈演化钟"""
+        """24小时不间断常驻轮询检测：完全依照真理源时钟设定驱动"""
         while self.is_running:
             try:
                 cfg = self.get_config()
-                if cfg["enabled"]:
+                if cfg.get("enabled", True):
                     now = datetime.now()
                     now_hm = now.strftime("%H:%M")
                     today_str = now.strftime("%Y-%m-%d")
 
-                    # 1. 业务时钟：执行日常采集与对账巡检 (默认 20:00/21:00)
-                    if now_hm == cfg["trigger_time"] and cfg.get("last_run_date") != today_str:
-                        print(f"\n[Scheduler] 到达预定时间 {cfg['trigger_time']}，开始自动执行业务采集与巡检...")
+                    harvest_target = cfg.get("harvest_trigger_time", "01:00")
+                    heal_target = cfg.get("heal_trigger_time", "05:00")
+
+                    # 1. 业务时钟：执行日常采集与对账巡检
+                    if now_hm == harvest_target and cfg.get("last_harvest_date") != today_str:
+                        print(f"\n[Scheduler] 到达真理源采集时间 {harvest_target}，开始自动执行业务采集与巡检...")
                         execute_daily_audit(trigger_type="cron")
-                        
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                        UPDATE scheduler_config SET last_run_date = ? 
-                        WHERE id = (SELECT id FROM scheduler_config ORDER BY id DESC LIMIT 1)
-                        """, (today_str,))
-                        conn.commit()
-                        conn.close()
+                        self.record_run("harvest", today_str)
                         print(f"[Scheduler] 业务采集与巡检执行完毕，已输出面向 AI 的 Trace 档案。")
 
-                    # 2. 自愈时钟：深夜 00:00 (午夜 12 点) 自动分析当晚 Trace，驱动代码与规则自进化
-                    heal_time = "00:00"
-                    if now_hm == heal_time and cfg.get("last_heal_date") != today_str:
-                        print(f"\n[Scheduler] 到达深夜演化时间 {heal_time}，AI 自愈引擎开始复盘当晚 Trace 档案...")
+                    # 2. 自愈时钟：复盘分析 Trace，驱动代码与规则自进化
+                    if now_hm == heal_target and cfg.get("last_heal_date") != today_str:
+                        print(f"\n[Scheduler] 到达真理源自愈时间 {heal_target}，AI 自愈引擎开始复盘分析上一次运行的 Trace 档案...")
                         try:
                             from .self_healing_engine import SelfHealingEngine
                             healer = SelfHealingEngine()
@@ -123,23 +140,7 @@ class SchedulerManager:
                         except Exception as heal_err:
                             print(f"[Scheduler] 自愈演化分析异常: {heal_err}")
 
-                        # 记录自愈时钟已执行
-                        try:
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            cursor.execute("ALTER TABLE scheduler_config ADD COLUMN last_heal_date TEXT DEFAULT ''")
-                            conn.commit()
-                        except Exception:
-                            pass
-                        
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                        UPDATE scheduler_config SET last_heal_date = ?
-                        WHERE id = (SELECT id FROM scheduler_config ORDER BY id DESC LIMIT 1)
-                        """, (today_str,))
-                        conn.commit()
-                        conn.close()
+                        self.record_run("heal", today_str)
             except Exception as e:
                 print(f"[Scheduler] 调度器轮询异常: {e}")
             

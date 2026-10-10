@@ -209,9 +209,10 @@ def handle_api_request(method, path, body_bytes):
             return 200, cfg
         elif method == "POST":
             enabled = body.get("enabled", True)
-            trigger_time = body.get("trigger_time", "21:00")
-            updated = scheduler_manager.update_config(enabled, trigger_time)
-            return 200, {"success": True, "message": f"定时时间已更新为每日 {trigger_time}", "config": updated}
+            harvest_time = body.get("harvest_trigger_time") or body.get("trigger_time", "01:00")
+            heal_time = body.get("heal_trigger_time")
+            updated = scheduler_manager.update_config(enabled, harvest_time, heal_time)
+            return 200, {"success": True, "message": f"定时采集时间已更新为每日 {harvest_time}", "config": updated}
 
     # 12. 读取最近巡检日志
     if route == "/api/logs" and method == "GET":

@@ -1,100 +1,113 @@
 ---
 name: code-review
-description: Conduct a systematic, rigorous code review for Git diffs, staged changes, pull requests, or specified source files. Evaluates architectural compliance, logic correctness, concurrency/resource safety, performance bottlenecks, and style.
+description: 代码审查全流程规范。系统性审查 Git 差异、暂存区改动、功能分支或指定源文件。重点核验架构准则合规性、单一真理源 (SSOT) 与 DRY 原则、逻辑正确性、并发与资源安全及代码规范。
 ---
 
-# Code Review Protocol
+# 代码审查标准化工作协议 (Code Review Protocol)
 
-Use this skill whenever the user asks for a code review, checks staged/uncommitted changes, audits a pull request, or evaluates code quality (e.g. "帮我做下代码评审", "审查最近的代码", "Review this PR/diff", "/review").
+当用户提出代码评审、检查工作区暂存或未暂存改动、审计功能分支/拉取请求，或评估代码质量时（例如：“帮我做下代码评审”、“审查最近的代码”、“Review this PR/diff”、“/review”），必须执行本协议。
 
-## 1. Scope Identification
+---
 
-1. **Detect Target Changes**:
-   - For uncommitted/staged working tree changes: run `git status` and `git diff HEAD` (or staged diff `git diff --cached`).
-   - For branch/PR comparisons: run `git diff main...HEAD` (or the relevant target branch).
-   - For specific commits: run `git show <commit_hash>`.
-   - For explicitly specified files: read and inspect the full content and recent diffs of those files.
-2. **Context Gathering**:
-   - Check project-level architecture constraints in [AGENTS.md](file:///d:/Software/asp_flux/spatial_vision/AGENTS.md) and related rule files.
-   - Check if changes touch key interfaces, state machines, or algorithmic solvers.
+## 一、 审查范围识别
 
-## 2. Review Dimensions
+1. **确定目标改动范围**：
+   - 工作区未暂存/已暂存改动：运行 `git status` 及 `git diff HEAD`（或暂存区比对 `git diff --cached`）；
+   - 分支或提交比对：运行 `git diff main...HEAD` 或针对特定提交运行 `git show <commit_hash>`；
+   - 针对显式指定文件：完整阅读目标文件并审查其最新修改。
+2. **上下文规则对齐**：
+   - 严格以根目录 [AGENTS.md](file:///d:/Software/opc_auto/AGENTS.md) 与核心架构设计规范为唯一准绳；
+   - 核查改动是否触及核心调度引擎、爬虫会话、数据库事务或对外 API 接口。
 
-Evaluate code against the following dimensions:
+---
 
-### A. 项目架构准则审查 (严格对齐 AGENTS.md)
+## 二、 核心审查维度
+
+围绕以下维度开展全面而严格的代码审计：
+
+### 1. 架构合规审查（严格对齐 AGENTS.md）
 - **零向后兼容 (Zero Backward Compatibility)**：核查是否引入任何废弃字段分支、fallback 回滚逻辑或内存别名胶水；必须单一真理源 (SSOT)。
+- **单一真理源与防重复 (SSOT & DRY Enforcement)**：核查系统配置、调度周期、预设项是否统一由权威源驱动；严禁前后端双轨硬编码或跨文件散落 Magic Literals。
 - **临时文件收敛隔离 (Temp File Isolation)**：核查排查脚本、实验图象、分析导出是否严格且仅存放在 `temp/`；业务与测试代码严禁依赖 `temp/`。
 
-### B. Correctness & Edge Cases
-- **Logic & Flow**: Check for off-by-one errors, inverted conditions, unreachable code, unhandled edge cases (empty lists/dicts, `None` values, zero division).
-- **Domain & Math Specifics**:
-  - Matrix shapes and dimensionality consistency.
-  - Coordinate frames, rotation conventions (quaternion vs rotation vector vs Euler), and metric units.
-  - Invariants of transformation matrices (e.g., proper SO(3) / SE(3) validity).
-- **Concurrency & State**:
-  - Thread safety in GUI / hub state managers.
-  - Proper task lifecycle handling (no orphaned background threads or event loops).
+### 2. DRY 与 SSOT 原则深度审查 (单一真理源与拒绝重复)
+- **单一真理源 (SSOT) 审查**：
+  - 检查跨端消费数据（如前端 UI 选项、后端调度时间、状态枚举）是否只由单一权威配置文件或数据模型持有，并通过统一 API 动态驱动；
+  - 严禁在 HTML 结构、JS 文件、Python 服务与测试用例中各自写死相同的数据或预设；
+  - 杜绝多头维护与配置副本，修改配置必须仅需改动一处源头。
+- **防重复 (DRY) 审查**：
+  - 检查代码库中是否存在复制粘贴的相似逻辑块、重复的数据清洗流程、重复的 DOM 选择器或手写 SQL/ORM 条件；
+  - 发现跨函数/跨模块重复逻辑，必须提出抽象提炼为共享服务、工具函数或统一配置的重构建议。
 
-### C. Resource & Performance
-- **Resource Management**:
-  - Always prefer explicit context managers (`with`) for files, network sockets, camera streams, and locks.
-  - Ensure hardware/device handles and GPU memory are explicitly released upon failure or teardown.
-- **Efficiency**:
-  - Avoid redundant deep copies or buffer allocations in high-frequency loops.
-  - Avoid blocking calls on the UI thread or inside event loops.
+### 3. 业务逻辑正确性与边界处理 (Correctness & Robustness)
+- **流程与边界条件**：核查是否存在差一错误 (Off-by-one)、条件反转、不可达死代码，以及空集合、None 空值、零除等边界分支。
+- **并发与状态安全**：
+  - 跨线程/异步任务生命周期管理（严禁孤儿后台线程或失控的定时器）；
+  - 数据库操作事务完整性与连接安全。
+- **网络与浏览器交互容错**：
+  - 拟人化浏览器会话与网络请求超时设置、异常重试退避机制与脏数据校验。
 
-### D. Testing & Type Safety
-- **Type Annotations**: Comprehensive typing for function signatures and public APIs.
-- **Test Coverage**: Ensure novel features, edge cases, and bug fixes are accompanied by unit tests.
+### 4. 资源生命周期与执行效能 (Resource & Performance)
+- **资源管理**：
+  - 文件句柄、网络会话、数据库连接、锁等资源必须优先使用显式上下文管理器 (`with`)；
+  - 异常分支中必须确保底层浏览器驱动或临时资源被彻底释放。
+- **性能与开销**：
+  - 避免在高频执行路径中进行冗余的深拷贝或无节制的大内存申请；
+  - 严禁在主事件循环或主线程中执行长耗时阻塞操作。
 
-### E. 命名审查原则 (严格对齐 AGENTS.md)
+### 5. 测试验证与类型安全 (Testing & Typing)
+- **类型注解**：公共 API、关键函数签名必须具备完整的 Python 类型标注 (`typing`)。
+- **测试覆盖度**：新增特性、关键业务逻辑改动或 Bug 修复必须具备对应的单元测试与回归断言。
+
+### 6. 命名规范与决策原则 (严格对齐 AGENTS.md)
 - **严禁擅自修改**：任何文件名、类名、函数名、变量名优化，严禁直接在代码中重命名或代用户做主；
 - **提供 3~5 候选**：针对待优化命名，必须列出 3 至 5 个备选方案并附带推荐理由与侧重点；
 - **交互式点选确认**：必须使用 `ask_question` 工具以单选/多选交互式选择题呈现，经用户明确点选确认后方可实施修改。
 
-## 3. Output Format
+---
 
-Present the review results in clear, actionable markdown:
+## 三、 审查报告输出规范
+
+使用清晰、专业、结构化的中文 Markdown 输出评审报告：
 
 ```markdown
-### 📋 评审概述 (Overview)
+### 📋 评审概述
 - **改动范围**: [简要说明改动的模块与主要意图]
-- **总体结论**: ✅ 通过 / ⚠️ 建议修改后合并 / ❌ 阻断性问题需重构
+- **总体结论**: ✅ 建议通过 / ⚠️ 建议修改后合并 / ❌ 存在阻断性问题需重构
 
 ---
 
-### 🔍 关键发现 (Findings by Severity)
+### 🔍 关键发现清单 (按严重级别划分)
 
-#### 🔴 P0 - 阻断性问题 (Blocker / Must Fix)
-> 严重逻辑缺陷、数据损坏隐患、违反核心架构准则（如残留向下兼容代码、临时文件污染源码目录）。
-- **[文件路径:行号]**: 问题描述及影响。
+#### 🔴 P0 - 阻断性问题 (必须修复)
+> 严重逻辑缺陷、数据损坏隐患、违反核心架构准则（如残留向下兼容代码、散落硬编码导致前后端 SSOT 割裂脱节、临时文件污染源码目录）。
+- **[文件路径:行号]**: 问题描述及潜在风险分析。
   \`\`\`diff
   - 待修改代码
   + 建议修改代码
   \`\`\`
 
-#### 🟡 P1 - 重要建议 (Major / Should Fix)
-> 性能隐患、异常/边界条件缺失、潜在竞态、未妥善释放的资源。
-- **[文件路径:行号]**: 改进说明与示例。
+#### 🟡 P1 - 重要改进建议 (强烈建议修复)
+> 违反 DRY 原则的大段重复代码逻辑、散落的魔数/硬编码常量、性能瓶颈隐患、异常/边界条件缺失、潜在竞态、未妥善释放的资源。
+- **[文件路径:行号]**: 改进说明与建议示例。
 
-#### 🟢 P2 - 细节与代码风格 (Minor / Nitpick)
-> 类型注解优化、文档与注释完善度、局部微调。
+#### 🟢 P2 - 细节优化与代码风格 (建议优化)
+> 类型注解补全、文档注释完善度、局部语法现代化微调。
 - **[文件路径:行号]**: 优化建议。
 
-#### 🏷️ 命名优化建议 (Naming Proposals - 供用户选择)
-> 规则：严禁直接修改，必须给出 3~5 个备选名字供用户裁定。
+#### 🏷️ 命名优化提案 (供用户选择)
+> 准则：严禁直接修改，必须给出 3~5 个备选名称供用户裁定。
 - **待优化项**: `[当前文件名 / 类名 / 函数名 / 变量名]`（位置：`path/to/file.py:L123`）
   - **当前问题**: 为什么现有命名不够合理/精准
   - **推荐候选方案 (请选择)**:
-    1. `candidate_name_1` - [推荐理由/侧重点]
-    2. `candidate_name_2` - [推荐理由/侧重点]
-    3. `candidate_name_3` - [推荐理由/侧重点]
-    4. `candidate_name_4` (可选) - [推荐理由/侧重点]
-    5. `candidate_name_5` (可选) - [推荐理由/侧重点]
+    1. `候选名称_1` - [推荐理由与语义侧重点]
+    2. `候选名称_2` - [推荐理由与语义侧重点]
+    3. `候选名称_3` - [推荐理由与语义侧重点]
+    4. `候选名称_4` (可选) - [推荐理由与语义侧重点]
+    5. `候选名称_5` (可选) - [推荐理由与语义侧重点]
 
 ---
 
-### 💡 综合建议与下一步行动 (Next Steps)
-- [列出开发者合并/运行测试前需执行的动作]
+### 💡 综合总结与后续行动建议
+- [列出开发者在合并或运行测试前需要执行的具体动作]
 ```
