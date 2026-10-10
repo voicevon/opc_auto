@@ -1,0 +1,10 @@
+# 临时调试与实验目录 (AGENTS.md 规范：严格隔离，永久忽略)
+temp/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 运行日志
+*.log
