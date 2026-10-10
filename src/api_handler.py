@@ -248,4 +248,52 @@ def handle_api_request(method, path, body_bytes):
             "report": report
         }
 
+    # 15. 读取决策简报列表 (人机在环决策事项)
+    if route == "/api/decisions" and method == "GET":
+        from .diagnostic_router import DecisionBriefManager
+        status_filter = query.get("status", [None])[0]
+        mgr = DecisionBriefManager()
+        briefs = mgr.list_briefs(status=status_filter)
+        return 200, {"briefs": briefs, "total": len(briefs)}
+
+    # 16. 人类操作员提交决策定夺
+    if route == "/api/decisions/resolve" and method == "POST":
+        from .diagnostic_router import DecisionBriefManager
+        brief_id = body.get("brief_id")
+        chosen_option_id = body.get("chosen_option_id")
+        operator_note = body.get("operator_note", "")
+
+        if not brief_id or not chosen_option_id:
+            return 400, {"error": "缺少 brief_id 或 chosen_option_id 参数"}
+
+        mgr = DecisionBriefManager()
+        updated = mgr.resolve_brief(brief_id, chosen_option_id, operator_note)
+        if not updated:
+            return 404, {"error": "未找到指定简报"}
+        return 200, {"success": True, "message": "决策指令已成功记录生效", "brief": updated}
+
+    # 17. 获取 Layer 1 双轨分流态势总览
+    if route == "/api/triage/overview" and method == "GET":
+        from .self_healing_engine import RuleEvolutionManager
+        from .diagnostic_router import DecisionBriefManager
+        rule_mgr = RuleEvolutionManager()
+        rules = rule_mgr.load_rules()
+        brief_mgr = DecisionBriefManager()
+        all_briefs = brief_mgr.list_briefs()
+        pending_briefs = [b for b in all_briefs if b.get("status") == "PENDING"]
+
+        return 200, {
+            "path_1_llm_healing": {
+                "rule_version": rules.get("version", "1.0.0"),
+                "total_evolutions": len(rules.get("evolution_history", [])),
+                "last_evolved_at": rules.get("last_evolved_at")
+            },
+            "path_2_human_decisions": {
+                "pending_count": len(pending_briefs),
+                "resolved_count": len(all_briefs) - len(pending_briefs),
+                "pending_list": pending_briefs
+            }
+        }
+
     return 404, {"error": "Not Found", "route": route}
+

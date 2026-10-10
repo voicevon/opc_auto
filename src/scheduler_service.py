@@ -131,10 +131,15 @@ class SchedulerManager:
                             from .self_healing_engine import SelfHealingEngine
                             healer = SelfHealingEngine()
                             heal_report = healer.analyze_and_heal()
+                            triage_path = heal_report.get("triage_path")
+
                             if heal_report.get("is_healed"):
-                                print(f"[Scheduler] 🚀 自愈成功！规则库演进至新版本: {heal_report.get('new_rule_version')}")
+                                print(f"[Scheduler] 🚀 路径一【LLM 代码自愈成功】！规则库演进至新版本: {heal_report.get('new_rule_version')}")
                                 for action in heal_report.get("actions_taken", []):
                                     print(f"   -> {action}")
+                            elif triage_path == "PATH_2_HUMAN_DECISION":
+                                brief = heal_report.get("decision_brief") or {}
+                                print(f"[Scheduler] ⚠️ 路径二【人类决策阻断】：检测到重大业务/风控事件，已自动生成《决策简报》[ID: {brief.get('id')}]，请管理员登录控制台定夺方向！")
                             else:
                                 print(f"[Scheduler] 前端选择器健康，基线正常。")
                         except Exception as heal_err:

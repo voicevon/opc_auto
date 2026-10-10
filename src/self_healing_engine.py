@@ -216,12 +216,30 @@ class SelfHealingEngine:
             report["diagnoses"].append("未检测到任何待分析的 Trace 档案")
             return report
 
+        # ======================================================================
+        # 核心：Layer 1 诊断分流器 (Dual-Path Triage Engine) 执行人机边界分流
+        # ======================================================================
+        from .diagnostic_router import DiagnosticRouter, TriagePath
+        router = DiagnosticRouter()
+        triage_res = router.evaluate(trace_data)
+        report["triage_path"] = triage_res["target_path"]
+        report["triage_category"] = triage_res["category"]
+        report["triage_reason"] = triage_res["reason"]
+
+        if triage_res["target_path"] == TriagePath.HUMAN_DECISION:
+            # 严格遵循 AGENTS.md 准则：业务/风控风险严禁擅自修改代码，立即提炼《决策简报》呈报人类
+            report["is_healed"] = False
+            report["decision_brief"] = triage_res.get("decision_brief")
+            report["diagnoses"].append(f"【触发路径二：重大业务/风控事件】{triage_res['reason']}")
+            report["actions_taken"].append(f"已阻断自动代码修改，已生成《决策简报》(ID: {triage_res.get('decision_brief', {}).get('id')})，挂起任务等待人类拍板定夺。")
+            return report
+
         platform = trace_data.get("platform", "taobao")
         selector_health = trace_data.get("selector_health", {})
         failure_ctx = trace_data.get("failure_context") or {}
         html_snippet = failure_ctx.get("snapshot_html_snippet", "")
 
-        # 遍历选择器健康度，探测失效点
+        # 遍历选择器健康度，探测失效点 (路径一：确定性技术退化处理)
         for field, health in selector_health.items():
             status = health.get("status", "")
             current_selector = health.get("selector", "")
