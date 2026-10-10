@@ -82,7 +82,7 @@ async function loadOrdersTable() {
           <td colspan="8" style="text-align:center; padding: 48px; color: var(--text-dim);">
             <div style="font-size: 16px; margin-bottom: 8px;">📭 当前暂无真实对账数据</div>
             <div style="font-size: 12px; color: var(--text-muted);">
-              请点击右上角 <b style="color:#60a5fa;">【➕ 录入真实业务单据】</b> 添加真实的采购订单或税局进项底账发票。
+              系统将由拟人化浏览器在后台自动采集电商采购订单，或点击右上角 <b style="color:#60a5fa;">【⚡ 立即执行交叉核验】</b> 立即处理。
             </div>
           </td>
         </tr>
@@ -237,107 +237,7 @@ function copyReportText() {
   navigator.clipboard.writeText(latestReportText).then(() => {
     alert("已将真实对账报告 Markdown 复制到剪贴板！");
   });
-}
-
-// 8. 录入真实业务单据
-function openCreateModal() {
-  document.getElementById("create-modal").classList.add("show");
-}
-
-function closeCreateModal() {
-  document.getElementById("create-modal").classList.remove("show");
-}
-
-function switchCreateType(type) {
-  const btnOrder = document.getElementById("btn-switch-order");
-  const btnInv = document.getElementById("btn-switch-invoice");
-  const formOrder = document.getElementById("form-order");
-  const formInv = document.getElementById("form-invoice");
-
-  if (type === "order") {
-    btnOrder.className = "btn btn-primary";
-    btnInv.className = "btn btn-secondary";
-    formOrder.style.display = "block";
-    formInv.style.display = "none";
-  } else {
-    btnOrder.className = "btn btn-secondary";
-    btnInv.className = "btn btn-primary";
-    formOrder.style.display = "none";
-    formInv.style.display = "block";
-  }
-}
-
-async function submitRealOrder(e) {
-  e.preventDefault();
-  const channel = document.getElementById("ord-channel").value;
-  const channelNames = { taobao: "淘宝采购", jd: "京东商城", pdd: "拼多多", offline: "线下自采" };
-
-  const payload = {
-    channel: channel,
-    channel_name: channelNames[channel],
-    order_no: document.getElementById("ord-no").value.trim(),
-    order_time: new Date().toISOString().split("T")[0],
-    item_desc: document.getElementById("ord-desc").value.trim(),
-    amount: parseFloat(document.getElementById("ord-amount").value),
-    seller_name: document.getElementById("ord-seller").value.trim(),
-    invoice_status: document.getElementById("ord-status").value
-  };
-
-  try {
-    const res = await fetch("/api/orders/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const result = await res.json();
-    if (result.success) {
-      alert("真实采购订单已保存入库！已自动触发交叉对账。");
-      closeCreateModal();
-      document.getElementById("form-order").reset();
-      await refreshAllData();
-      await fetchSystemStatus();
-    } else {
-      alert("保存失败: " + result.error);
-    }
-  } catch (err) {
-    alert("请求失败: " + err.message);
-  }
-}
-
-async function submitRealInvoice(e) {
-  e.preventDefault();
-  const payload = {
-    invoice_number: document.getElementById("inv-no").value.trim(),
-    issue_date: document.getElementById("inv-date").value.trim(),
-    seller_name: document.getElementById("inv-seller").value.trim(),
-    seller_tax_id: document.getElementById("inv-taxid").value.trim(),
-    total_amount: parseFloat(document.getElementById("inv-amount").value),
-    tax_amount: 0.0,
-    invoice_type: "数电专票"
-  };
-
-  try {
-    const res = await fetch("/api/tax-invoices/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const result = await res.json();
-    if (result.success) {
-      alert("真实进项发票已导入底账库！已自动触发交叉对账。");
-      closeCreateModal();
-      document.getElementById("form-invoice").reset();
-      await refreshAllData();
-      await fetchSystemStatus();
-    } else {
-      alert("导入失败: " + result.error);
-    }
-  } catch (err) {
-    alert("请求失败: " + err.message);
-  }
-}
-
-// 9. 企业开票信息配置
+// 8. 企业开票信息配置
 async function openProfileModal() {
   try {
     const res = await fetch("/api/config/billing");

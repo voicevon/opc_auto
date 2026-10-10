@@ -145,68 +145,6 @@ def handle_api_request(method, path, body_bytes):
             return 200, rep
         return 200, {"message": "当前尚未生成任何日报，请先执行巡检任务", "markdown_content": "# 暂无日报\n尚未执行巡检或数据库中无数据。"}
 
-    # 6. 真实录入采购订单
-    if route == "/api/orders/create" and method == "POST":
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-            INSERT INTO procurement_orders (
-                channel, channel_name, order_no, order_time, item_desc, amount, seller_name, invoice_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                body.get("channel", "taobao"),
-                body.get("channel_name", "淘宝采购"),
-                body.get("order_no", "").strip(),
-                body.get("order_time", ""),
-                body.get("item_desc", "").strip(),
-                float(body.get("amount", 0.0)),
-                body.get("seller_name", "").strip(),
-                body.get("invoice_status", "unapplied")
-            ))
-            conn.commit()
-            order_id = cursor.lastrowid
-            conn.close()
-            # 立即触发重新对账
-            run_reconciliation()
-            return 200, {"success": True, "order_id": order_id, "message": "采购订单录入成功"}
-        except Exception as e:
-            conn.close()
-            return 400, {"success": False, "error": str(e)}
-
-    # 7. 真实录入/同步税局发票
-    if route == "/api/tax-invoices/create" and method == "POST":
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        try:
-            total_amt = float(body.get("total_amount", 0.0))
-            tax_amt = float(body.get("tax_amount", 0.0))
-            amt_no_tax = total_amt - tax_amt
-            cursor.execute("""
-            INSERT INTO tax_inbound_invoices (
-                invoice_number, issue_date, seller_tax_id, seller_name,
-                amount_without_tax, tax_amount, total_amount, invoice_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                body.get("invoice_number", "").strip(),
-                body.get("issue_date", "").strip(),
-                body.get("seller_tax_id", "").strip(),
-                body.get("seller_name", "").strip(),
-                amt_no_tax,
-                tax_amt,
-                total_amt,
-                body.get("invoice_type", "数电专票")
-            ))
-            conn.commit()
-            inv_id = cursor.lastrowid
-            conn.close()
-            # 立即触发重新对账
-            run_reconciliation()
-            return 200, {"success": True, "invoice_id": inv_id, "message": "税局发票录入成功"}
-        except Exception as e:
-            conn.close()
-            return 400, {"success": False, "error": str(e)}
-
     # 8. 真实触发订单开票申请状态变更
     if route == "/api/orders/apply-invoice" and method == "POST":
         order_no = body.get("order_no")

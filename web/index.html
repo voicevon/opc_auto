@@ -86,10 +86,6 @@
         <span class="current" id="page-title">进项发票智能跟踪与核对台账</span>
       </div>
       <div class="action-buttons">
-        <button class="btn btn-secondary" onclick="openCreateModal()">
-          <span>➕</span>
-          <span>录入真实业务单据</span>
-        </button>
         <button class="btn btn-secondary" onclick="openReportModal()">
           <span>📑</span>
           <span>查看总结报告</span>
@@ -223,100 +219,6 @@
 
     </div>
   </main>
-
-  <!-- 模态框 1：录入真实业务单据 -->
-  <div class="modal-overlay" id="create-modal">
-    <div class="modal-card" style="max-width: 620px;">
-      <div class="modal-header">
-        <div class="modal-title">➕ 录入真实业务单据 (直接持久化到 SQLite)</div>
-        <button class="modal-close" onclick="closeCreateModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div style="display:flex; gap:12px; margin-bottom:16px;">
-          <button class="btn btn-primary" id="btn-switch-order" onclick="switchCreateType('order')" style="flex:1;">
-            录入真实采购订单 (淘宝/京东/线下)
-          </button>
-          <button class="btn btn-secondary" id="btn-switch-invoice" onclick="switchCreateType('invoice')" style="flex:1;">
-            录入税局进项发票 (数电票)
-          </button>
-        </div>
-
-        <!-- 表单一：采购订单 -->
-        <form id="form-order" onsubmit="submitRealOrder(event)">
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">采购渠道 *</label>
-              <select id="ord-channel" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-                <option value="taobao">淘宝 / 天猫</option>
-                <option value="jd">京东商城 (自营/POP)</option>
-                <option value="pdd">拼多多</option>
-                <option value="offline">线下自采 / 加油站</option>
-              </select>
-            </div>
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">采购订单号 *</label>
-              <input type="text" id="ord-no" required placeholder="如 TB20261010001" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-          </div>
-          <div style="margin-bottom: 12px;">
-            <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">商品/服务内容摘要 *</label>
-            <input type="text" id="ord-desc" required placeholder="如 联想商务电脑 / 打印纸耗材" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-          </div>
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">交易实付金额 (元) *</label>
-              <input type="number" step="0.01" id="ord-amount" required placeholder="如 1280.00" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">店铺/卖家商户名称 *</label>
-              <input type="text" id="ord-seller" required placeholder="如 北京京东世纪信息技术有限公司" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-          </div>
-          <div style="margin-bottom: 12px;">
-            <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">当前平台开票状态</label>
-            <select id="ord-status" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-              <option value="unapplied">未申请发票 (对应状态②待办)</option>
-              <option value="applying">已申请开票中 (对应状态③催票)</option>
-            </select>
-          </div>
-          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; padding:10px;">
-            确认保存到真实数据库
-          </button>
-        </form>
-
-        <!-- 表单二：税局进项发票 -->
-        <form id="form-invoice" style="display:none;" onsubmit="submitRealInvoice(event)">
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">数电发票号码 (20位) *</label>
-              <input type="text" id="inv-no" required placeholder="如 24112000000182736192" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">开票日期 (YYYY-MM-DD) *</label>
-              <input type="text" id="inv-date" required placeholder="如 2026-10-10" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-          </div>
-          <div style="margin-bottom: 12px;">
-            <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">销售方企业全称 (工商登记名) *</label>
-            <input type="text" id="inv-seller" required placeholder="如 北京京东世纪信息技术有限公司" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-          </div>
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">价税合计总金额 (元) *</label>
-              <input type="number" step="0.01" id="inv-amount" required placeholder="如 1280.00" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-            <div>
-              <label style="font-size:12px; color:var(--text-dim); display:block; margin-bottom:4px;">销方税号 (统一社会信用代码)</label>
-              <input type="text" id="inv-taxid" placeholder="如 911103026605151528" style="width:100%; padding:8px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color);">
-            </div>
-          </div>
-          <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; padding:10px;">
-            确认导入进项发票底账库
-          </button>
-        </form>
-      </div>
-    </div>
-  </div>
 
   <!-- 模态框 2：企业真实开票抬头配置 -->
   <div class="modal-overlay" id="profile-modal">

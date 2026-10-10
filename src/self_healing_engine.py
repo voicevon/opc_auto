@@ -231,10 +231,23 @@ class SelfHealingEngine:
                 diag_msg = f"检测到字段 [{field}] 原选择器 `{current_selector}` 命中率为 0，判定发生前端变迁或类名混淆。"
                 report["diagnoses"].append(diag_msg)
 
-                # 启动启发式自愈推导
-                healed_selector = self._infer_new_selector(field, html_snippet)
+                # 1. 本地上下文蒸馏管道：剔除噪音，提纯黄金切片 (< 3KB)
+                try:
+                    from .llm_solver_gateway import TelemetryPruner, AISolverGateway
+                    keywords = ["查看发票", "申请开票", "发票详情"] if "invoice" in field else ["订单号", "买家"]
+                    distilled_ctx = TelemetryPruner.distill_for_solver(trace_data, field, keywords)
+                    
+                    # 2. 外部 LLM 网关求解 (支持 Gemini / OpenAI / 离线沙箱兜底)
+                    gateway = AISolverGateway()
+                    solution = gateway.solve(distilled_ctx)
+                    healed_selector = solution.get("new_selector")
+                    reason = solution.get("healing_reason", "LLM 网关基于骨架 DOM 语义推导新选择器")
+                except Exception as solver_err:
+                    logger.warning(f"LLM 网关求解发生异常，降级为内部推导: {solver_err}")
+                    healed_selector = self._infer_new_selector(field, html_snippet)
+                    reason = f"降级推导新选择器，替代失效规则 `{current_selector}`"
+
                 if healed_selector:
-                    reason = f"自愈引擎根据 DOM 切片推导新选择器，替代失效规则 `{current_selector}`"
                     field_target = "invoice_btn_selectors" if "invoice" in field else "order_card_selectors"
                     
                     new_version = self.rule_manager.update_rule_with_evolution(
@@ -244,7 +257,7 @@ class SelfHealingEngine:
                         reason=reason
                     )
                     
-                    action_msg = f"字段 [{field}] 自愈成功：新优先选择器 `{healed_selector}` 已生效，规则库演进至 v{new_version}"
+                    action_msg = f"字段 [{field}] 经 LLM 求解网关自愈成功：新优先选择器 `{healed_selector}` 已生效，规则库演进至 v{new_version}"
                     report["actions_taken"].append(action_msg)
                     report["is_healed"] = True
                     report["new_rule_version"] = new_version

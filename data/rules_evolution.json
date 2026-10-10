@@ -1,6 +1,6 @@
 {
-  "version": "1.0.1",
-  "last_evolved_at": "2026-10-10T17:30:41.301405",
+  "version": "1.0.2",
+  "last_evolved_at": "2026-10-10T18:07:07.083842",
   "platforms": {
     "taobao": {
       "order_card_selectors": [
@@ -24,6 +24,7 @@
         "a.shop-title"
       ],
       "invoice_btn_selectors": [
+        ":has-text('查看发票')",
         "span.ant-btn-link",
         "button.invoice-action",
         "a[href*='invoice']",
@@ -72,6 +73,14 @@
       "field": "invoice_btn_selectors",
       "new_rule": "span.ant-btn-link",
       "reason": "自愈引擎根据 DOM 切片推导新选择器，替代失效规则 `button.invoice-action`"
+    },
+    {
+      "version": "1.0.2",
+      "timestamp": "2026-10-10T18:07:07.083842",
+      "platform": "taobao",
+      "field": "invoice_btn_selectors",
+      "new_rule": ":has-text('查看发票')",
+      "reason": "采用通用语义文本锚点进行全网安全兜底"
     }
   ]
 }
