@@ -311,5 +311,15 @@ def handle_api_request(method, path, body_bytes):
             }
         }
 
+    # 18. Trae 积分签到插件：读取签到状态
+    if route == "/api/trae_score" and method == "GET":
+        from trae_score.runner import get_status
+        return 200, get_status()
+
+    # 19. Trae 积分签到插件：手动触发一次签到 (幂等)
+    if route == "/api/trae_score/claim" and method == "POST":
+        from trae_score.runner import run_daily_claim
+        return 200, run_daily_claim(trigger_type=body.get("trigger", "manual"))
+
     return 404, {"error": "Not Found", "route": route}
 

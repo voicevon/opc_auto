@@ -45,7 +45,7 @@ trae_score/
 └── README.md     # 本文档
 ```
 
-- **调度**：并入 `src/scheduler_service.py` 双时钟体系扩展为第三时钟 `score_trigger_time: 01:30`（SSOT：`data/scheduler_config.json`）
+- **调度**：并入 `src/scheduler_service.py` 双时钟体系扩展为第三时钟 `score_trigger_time: 03:00`（SSOT：`data/scheduler_config.json`）
 - **API**：`GET /api/trae_score`（查状态）、`POST /api/trae_score/claim`（手动触发）
 - **安全**：令牌仅在内存中使用，绝不写日志、不落盘；依赖 `requests` + `pycryptodome`
 - **幂等**：`status.checked_in=true` 自动跳过，同日多次运行安全

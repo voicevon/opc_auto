@@ -33,6 +33,7 @@ class SchedulerManager:
                 "enabled": True,
                 "harvest_trigger_time": "01:00",
                 "heal_trigger_time": "05:00",
+                "score_trigger_time": "03:00",
                 "preset_options": [
                     {"label": "凌晨 01:00 (推荐低峰)", "time": "01:00"},
                     {"label": "晚上 20:00 (8点)", "time": "20:00"},
@@ -40,6 +41,7 @@ class SchedulerManager:
                 ],
                 "last_harvest_date": "",
                 "last_heal_date": "",
+                "last_score_date": "",
                 "updated_at": datetime.now().isoformat()
             }
             os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
@@ -89,6 +91,8 @@ class SchedulerManager:
                 cfg["last_harvest_date"] = date_str
             elif run_type == "heal":
                 cfg["last_heal_date"] = date_str
+            elif run_type == "score":
+                cfg["last_score_date"] = date_str
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
 
@@ -116,6 +120,7 @@ class SchedulerManager:
 
                     harvest_target = cfg.get("harvest_trigger_time", "01:00")
                     heal_target = cfg.get("heal_trigger_time", "05:00")
+                    score_target = cfg.get("score_trigger_time", "03:00")
 
                     # 1. 业务时钟：执行日常采集与对账巡检 (具备休眠与启动补偿能力)
                     if (now_hm >= harvest_target) and (cfg.get("last_harvest_date") != today_str):
@@ -146,6 +151,18 @@ class SchedulerManager:
                             print(f"[Scheduler] 自愈演化分析异常: {heal_err}")
 
                         self.record_run("heal", today_str)
+
+                    # 3. 积分时钟：Trae 每日签到自动领取 (trae_score 插件，具备启动补偿能力)
+                    if (now_hm >= score_target) and (cfg.get("last_score_date") != today_str):
+                        print(f"\n[Scheduler] 触发真理源积分任务 (设定: {score_target}, 当前: {now_hm})，执行 Trae 每日积分签到...")
+                        try:
+                            from trae_score.runner import run_daily_claim
+                            score_result = run_daily_claim(trigger_type="cron")
+                            print(f"[Scheduler] Trae 积分签到结果：{score_result['message']}"
+                                  + (f" (当前积分 {score_result['credits']})" if score_result.get("credits") is not None else ""))
+                        except Exception as score_err:
+                            print(f"[Scheduler] Trae 积分签到异常: {score_err}")
+                        self.record_run("score", today_str)
             except Exception as e:
                 print(f"[Scheduler] 调度器轮询异常: {e}")
             

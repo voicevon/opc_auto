@@ -2,6 +2,7 @@
   "enabled": true,
   "harvest_trigger_time": "01:00",
   "heal_trigger_time": "05:00",
+  "score_trigger_time": "03:00",
   "preset_options": [
     {
       "label": "凌晨 01:00 (推荐低峰)",
@@ -18,6 +19,7 @@
   ],
   "last_harvest_date": "2026-10-11",
   "last_heal_date": "2026-10-11",
+  "last_score_date": "",
   "updated_at": "2026-10-10T19:18:47.419334",
   "next_run_full": "2026-10-12 01:00:00",
   "trigger_time": "01:00"
