@@ -116,6 +116,35 @@
         </button>
       </div>
 
+      <!-- 拟人化浏览器采集与过程流水线看板 (实时过程态呈现) -->
+      <div class="pipeline-card" style="background: rgba(18, 24, 38, 0.95); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <div style="width: 44px; height: 44px; border-radius: 10px; background: rgba(59, 130, 246, 0.15); display: flex; align-items: center; justify-content: center; font-size: 22px;">
+            🌐
+          </div>
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-weight: 700; color: #fff; font-size: 15px;">宿主浏览器接管流水线</span>
+              <span id="cdp-status-badge" class="channel-badge" style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.4);">
+                ● CDP 9222 调试端口未连接
+              </span>
+            </div>
+            <div id="pipeline-trace-summary" style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">
+              最近采集：正在加载中间过程数据...
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <button class="btn btn-secondary" style="padding: 7px 14px; font-size: 12px;" onclick="openTraceModal()">
+            <span>🔬</span><span>查看采集中间过程 (Trace)</span>
+          </button>
+          <button class="btn btn-secondary" style="padding: 7px 14px; font-size: 12px; color: #60a5fa;" onclick="openChromeGuideModal()">
+            <span>🚀</span><span>开启浏览器指南</span>
+          </button>
+        </div>
+      </div>
+
       <!-- 四大状态 KPI 指标卡 (100% 真实统计计算，零 hardcode) -->
       <div class="kpi-grid">
         <!-- 状态④：配对成功 -->
@@ -310,6 +339,68 @@
             保存并立即生效
           </button>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 5：拟人化采集中间过程数据 (AI Agent Trace 现场) -->
+  <div class="modal-overlay" id="trace-modal">
+    <div class="modal-card" style="max-width: 860px; max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div class="modal-title">🔬 拟人化采集中间过程数据与 Trace 诊断档案</div>
+        <button class="modal-close" onclick="closeTraceModal()">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 20px;">
+        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+          <select id="trace-select" onchange="renderSelectedTrace()" style="flex: 1; padding: 8px 12px; border-radius: 6px; background: #0a0e17; color: #fff; border: 1px solid var(--border-color); font-size: 13px;">
+            <option value="">加载中...</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadTracesList()">🔄 刷新列表</button>
+        </div>
+
+        <div id="trace-detail-container">
+          <div style="text-align: center; padding: 40px; color: var(--text-dim);">请选择 Trace 档案查看详细中间时序与选择器指标</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeTraceModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 6：Chrome 调试端口开启指引 -->
+  <div class="modal-overlay" id="chrome-guide-modal">
+    <div class="modal-card" style="max-width: 580px;">
+      <div class="modal-header">
+        <div class="modal-title">🚀 宿主 Chrome 9222 调试端口启动指南</div>
+        <button class="modal-close" onclick="closeChromeGuideModal()">✕</button>
+      </div>
+      <div class="modal-body" style="line-height: 1.7; font-size: 13px; color: #cbd5e1;">
+        <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; color: #93c5fd;">
+          <b>核心原理：</b>系统通过原生 CDP 协议接管您真实的本地 Chrome，直接复用您已登录的淘宝/京东 Cookie，杜绝任何滑块风控。
+        </div>
+
+        <ol style="padding-left: 20px; display: flex; flex-direction: column; gap: 12px;">
+          <li>
+            <b>第一步：关闭已有普通 Chrome 窗口</b><br>
+            <span style="color: var(--text-dim);">若 Chrome 正在运行且未开调试端口，Chrome 单例机制将阻止开启端口。请先保存工作并关闭普通 Chrome 窗口。</span>
+          </li>
+          <li>
+            <b>第二步：双击启动脚本</b><br>
+            <span>在项目根目录下双击运行：<code style="background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 4px; color: #38bdf8;">start_chrome_debug.bat</code></span>
+          </li>
+          <li>
+            <b>第三步：登录并保持页面开启</b><br>
+            <span>在启动的浏览器窗口中登录淘宝，并打开<b>『已买到的宝贝』</b>列表页，保持该窗口开启。</span>
+          </li>
+          <li>
+            <b>第四步：自动采集或一键核验</b><br>
+            <span>刷新本系统工作台，状态栏将变为 <b>🟢 CDP 9222 已连接</b>。之后定时器到达或点击右上角<b>【⚡ 立即执行交叉核验】</b>即可全自动抓取与对账！</span>
+          </li>
+        </ol>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="closeChromeGuideModal()">我知道了</button>
       </div>
     </div>
   </div>

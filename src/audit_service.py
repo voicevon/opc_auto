@@ -8,35 +8,130 @@ from .reconciliation_engine import run_reconciliation
 
 def execute_daily_audit(trigger_type="manual"):
     """
-    执行一次真实的自动化对账巡检，并生成当日 Markdown 总结报告
+    执行真实的端到端全流程巡检：
+    1. 接管宿主 Chrome CDP (9222) 拟人化采集电商采购订单，生成面向 AI 的 Trace 档案；
+    2. 将采集订单落库 procurement_orders；
+    3. 执行 run_reconciliation() 全量交叉对账；
+    4. 生成详细的 Markdown 每日总结报告落库。
     """
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # 1. 记录巡检启动日志
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     today_str = datetime.now().strftime("%Y-%m-%d")
 
+    # 1. 记录巡检启动日志
     cursor.execute("""
     INSERT INTO audit_logs (trigger_type, status, message, details)
-    VALUES (?, 'running', '开始执行发票全量交叉对账巡检', ?)
+    VALUES (?, 'running', '开始执行真实浏览器采集与发票全量交叉对账巡检', ?)
     """, (trigger_type, f"触发时间: {now_str}"))
     conn.commit()
     log_id = cursor.lastrowid
+    conn.close()
 
-    # 2. 运行核心对账计算
+    # 2. 真实浏览器 CDP 拟人化采集与 Trace 记录
+    from .browser_harvest_service import HumanoidBrowserHarvester, AgentTraceLogger
+    trace_logger = AgentTraceLogger(platform="taobao")
+    harvester = HumanoidBrowserHarvester()
+
+    harvest_status_summary = {
+        "cdp_connected": False,
+        "orders_extracted": 0,
+        "trace_id": trace_logger.trace_id,
+        "trace_file": trace_logger.trace_file,
+        "message": ""
+    }
+
+    if not harvester.is_browser_ready():
+        trace_logger.record_failure_context(
+            failed_step="check_cdp_port",
+            error_msg="宿主浏览器 9222 调试端口未开放 (127.0.0.1:9222 无法连接)",
+            suspected_cause="Chrome 未携带 --remote-debugging-port=9222 启动。请双击运行 start_chrome_debug.bat 启动浏览器"
+        )
+        trace_logger.finish(extracted_items=[], success=False)
+        harvest_status_summary["message"] = "Chrome 9222 调试端口未开放，未能挂接已登录会话；已生成诊断 Trace 档案供自愈分析"
+    else:
+        try:
+            attached = harvester.attach_to_page(url_keyword="taobao", trace_logger=trace_logger)
+            if not attached:
+                # 尝试挂接任意当前活跃的标签页
+                attached = harvester.attach_to_page(url_keyword="", trace_logger=trace_logger)
+
+            if attached:
+                harvest_status_summary["cdp_connected"] = True
+                # 拟人化平滑滚动页面，触发懒加载并记录过程时序
+                harvester.humanoid_scroll_and_wait(min_wait=0.8, max_wait=1.8, trace_logger=trace_logger)
+                extracted_items = harvester.harvest_orders(platform="taobao", trace_logger=trace_logger)
+                trace_logger.finish(extracted_items=extracted_items, success=(len(extracted_items) > 0))
+
+                harvest_status_summary["orders_extracted"] = len(extracted_items)
+                harvest_status_summary["message"] = f"拟人化采集成功，获取 {len(extracted_items)} 笔电商采购订单"
+
+                # 将真实采集订单清洗落入 procurement_orders
+                if extracted_items:
+                    conn_orders = get_db_connection()
+                    cur_orders = conn_orders.cursor()
+                    for it in extracted_items:
+                        order_no = str(it.get("order_id", "")).strip()
+                        if not order_no:
+                            continue
+                        pay_amt = float(it.get("pay_amount", 0.0))
+                        seller = it.get("store_name", "") or "淘宝精选店铺"
+                        raw_status = it.get("invoice_status", "")
+                        inv_status = "invoiced" if "已开票" in raw_status else ("applying" if "已申请" in raw_status else "unapplied")
+                        item_desc = it.get("raw_snippet", "")[:120] or f"淘宝采购订单 {order_no}"
+
+                        cur_orders.execute("""
+                        INSERT INTO procurement_orders (
+                            channel, channel_name, order_no, order_time, item_desc, amount, seller_name, invoice_status, notes
+                        ) VALUES ('taobao', '淘宝企业购', ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(order_no) DO UPDATE SET
+                            amount=excluded.amount,
+                            seller_name=excluded.seller_name,
+                            invoice_status=excluded.invoice_status,
+                            notes=excluded.notes
+                        """, (order_no, now_str, item_desc, pay_amt, seller, inv_status, f"CDP采集状态: {raw_status}"))
+                    conn_orders.commit()
+                    conn_orders.close()
+            else:
+                trace_logger.record_failure_context(
+                    failed_step="attach_to_page",
+                    error_msg="未在浏览器中找到可挂接的订单页面标签",
+                    suspected_cause="请确保浏览器中已打开淘宝『已买到的宝贝』页面"
+                )
+                trace_logger.finish(extracted_items=[], success=False)
+                harvest_status_summary["message"] = "未在 Chrome 中定位到订单标签页"
+        except Exception as e:
+            trace_logger.record_failure_context(
+                failed_step="harvest_execution",
+                error_msg=str(e),
+                suspected_cause="拟人化数据收割执行期间异常"
+            )
+            trace_logger.finish(extracted_items=[], success=False)
+            harvest_status_summary["message"] = f"采集过程发生异常: {e}"
+        finally:
+            harvester.close()
+
+    # 3. 运行核心交叉对账计算
     stats = run_reconciliation()
 
-    # 3. 构造真实的总结报告 Markdown 内容
-    md_report = f"""# 📑 OPC Auto 每日发票对账与异常总结报告 ({today_str})
+    # 4. 构造包含采集现场与对账结果的 Markdown 总结报告
+    cdp_status_icon = "🟢" if harvest_status_summary["cdp_connected"] else "🔴"
+    md_report = f"""# 📑 OPC Auto 每日全流程采购采集与发票对账报告 ({today_str})
 
-### 一、 核心对账指标总览
-- **巡检执行时间**：{now_str} ({'用户手动触发' if trigger_type == 'manual' else '系统定时任务触发'})
+### 一、 拟人化浏览器采集流水线状态
+- **执行触发时间**：{now_str} ({'用户手动触发' if trigger_type == 'manual' else '系统定时任务触发'})
+- **Chrome CDP 宿主连接**：{cdp_status_icon} {'9222 调试会话已挂接' if harvest_status_summary["cdp_connected"] else '9222 端口未开放 (离线模式)'}
+- **本轮采集采购订单**：{harvest_status_summary["orders_extracted"]} 笔
+- **AI 现场 Trace 档案**：`{harvest_status_summary["trace_id"]}`
+- **采集摘要说明**：{harvest_status_summary["message"]}
+
+### 二、 核心交叉对账指标总览
 - **纳入对账采购订单**：{stats['total_orders']} 笔
 - **税局进项有效发票**：{stats['total_invoices']} 笔
 - **闭环匹配成功率**：{round(stats['matched']['count'] / stats['total_orders'] * 100, 1) if stats['total_orders'] > 0 else 0.0}%
 
-### 二、 四大业务分类详报
+### 三、 四大业务分类详报
 1. 🟢 **状态④ 核对配对成功 (闭环归档)**：
    - 笔数：{stats['matched']['count']} 笔
    - 价税合计总额：￥{stats['matched']['amount']:,.2f} 元
@@ -50,17 +145,19 @@ def execute_daily_audit(trigger_type="manual"):
    - 笔数：{stats['offline']['count']} 笔
    - 线下受票总额：￥{stats['offline']['amount']:,.2f} 元
 
-### 三、 处置建议与后续待办
+### 四、 处置建议与后续待办
 """
     if stats['warning']['count'] > 0:
         md_report += f"- ⚠ 请财务专员优先针对状态③中的 {stats['warning']['count']} 笔超期订单联系商家催开发票。\n"
     if stats['pending']['count'] > 0:
         md_report += f"- 📌 针对状态②中的 {stats['pending']['count']} 笔未申请订单，建议使用一键提报开票申请。\n"
-    if stats['total_orders'] == 0 and stats['total_invoices'] == 0:
-        md_report += "- ℹ 当前数据库中暂无采购订单与进项发票记录，请先在工作台录入或导入真实业务数据。\n"
+    if not harvest_status_summary["cdp_connected"]:
+        md_report += "- 💡 **提示**：检测到浏览器 9222 调试端口未启动。若需自动采集淘宝/京东新订单，请双击运行 `start_chrome_debug.bat` 开启会话。\n"
 
-    # 4. 将报告落库
-    cursor.execute("""
+    # 5. 将报告落库
+    conn_rep = get_db_connection()
+    cur_rep = conn_rep.cursor()
+    cur_rep.execute("""
     INSERT INTO daily_reports (
         report_date, total_orders, total_invoices,
         matched_count, matched_amount,
@@ -92,19 +189,20 @@ def execute_daily_audit(trigger_type="manual"):
         md_report
     ))
 
-    # 5. 更新巡检日志状态
+    # 6. 更新巡检日志状态
     finish_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("""
-    UPDATE audit_logs SET status = 'success', message = '巡检完成并生成日报',
+    cur_rep.execute("""
+    UPDATE audit_logs SET status = 'success', message = '采集与巡检完成并生成日报',
            details = ? WHERE id = ?
-    """, (f"耗时对账完成，耗时完成于 {finish_str}，订单: {stats['total_orders']}，发票: {stats['total_invoices']}", log_id))
+    """, (f"采集订单: {harvest_status_summary['orders_extracted']}, 库内订单: {stats['total_orders']}, 进项发票: {stats['total_invoices']}, Trace: {harvest_status_summary['trace_id']}", log_id))
 
-    conn.commit()
-    conn.close()
+    conn_rep.commit()
+    conn_rep.close()
 
     return {
         "status": "success",
         "executed_at": finish_str,
+        "harvest": harvest_status_summary,
         "stats": stats,
         "report_markdown": md_report
     }

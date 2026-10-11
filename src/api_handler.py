@@ -21,7 +21,7 @@ def handle_api_request(method, path, body_bytes):
         except Exception:
             pass
 
-    # 1. 系统真实状态
+    # 1. 系统真实状态 (包含数据库指标与宿主浏览器 CDP 9222 状态)
     if route == "/api/status" and method == "GET":
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -33,14 +33,30 @@ def handle_api_request(method, path, body_bytes):
         last_audit = cursor.fetchone()
         conn.close()
 
+        from .browser_harvest_service import HumanoidBrowserHarvester, AgentTraceLogger
+        harvester = HumanoidBrowserHarvester()
+        browser_ready = harvester.is_browser_ready()
+        recent_traces = AgentTraceLogger.get_latest_traces(limit=1)
+        latest_trace = recent_traces[0] if recent_traces else None
+
         return 200, {
             "status": "online",
             "mode": "real_production",
             "db_path": DB_PATH,
+            "browser_ready": browser_ready,
+            "browser_port": 9222,
             "total_orders": order_count,
             "total_invoices": invoice_count,
-            "last_audit_time": last_audit["executed_at"] if last_audit else "尚未执行过巡检"
+            "last_audit_time": last_audit["executed_at"] if last_audit else "尚未执行过巡检",
+            "latest_trace": latest_trace
         }
+
+    # 1.1 读取最近 AI 执行 Trace 档案列表 (面向中间过程可观测性)
+    if route == "/api/traces" and method == "GET":
+        from .browser_harvest_service import AgentTraceLogger
+        limit_val = int(query.get("limit", [5])[0])
+        traces = AgentTraceLogger.get_latest_traces(limit=limit_val)
+        return 200, {"traces": traces, "total": len(traces)}
 
     # 2. 真实四状态指标数据
     if route == "/api/stats" and method == "GET":
