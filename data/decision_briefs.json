@@ -1,1 +1,43 @@
-[]
+[
+  {
+    "id": "BRIEF-1791680700062",
+    "title": "【风控阻断警报】TAOBAO 平台触发安全风控与人机验证阻断",
+    "category": "RISK_CONTROL_BLOCK",
+    "status": "PENDING",
+    "trace_id": "trace_taobao_risk_002",
+    "platform": "taobao",
+    "created_at": "2026-10-11T09:05:00.062073",
+    "phenomenon": "自动化采集在访问目标页面时遭遇反爬防御或登录凭证过期，页面重定向至验证/登录屏障。",
+    "root_cause": "电商风控系统识别到设备指纹异常或会话 Cookie 超出有效生存期（TTL）。",
+    "impact": "当前批次采购订单及发票数据采集暂时挂起，该平台当日对账任务延后。",
+    "options": [
+      {
+        "option_id": "opt_manual_login",
+        "title": "方案 A：人工打开宿主真实浏览器完成扫码/滑块验证",
+        "description": "操作员在本机 Chrome 打开对应平台完成交互，系统随后重新附着复用最新登录态。",
+        "pros": "最安全、零封号风险、直接沿用真人信任链。",
+        "cons": "需要人工在几分钟内协同操作一次。",
+        "is_recommended": true
+      },
+      {
+        "option_id": "opt_switch_export",
+        "title": "方案 B：切换为财务后台手工导出 Excel 导入模式",
+        "description": "跳过本次拟人化爬取，由财务登录后台导出账单后上传本系统完成核对。",
+        "pros": "不触发任何风控检测，数据完整度高。",
+        "cons": "脱离了全自动采集流程，依赖人工周期性导出。",
+        "is_recommended": false
+      },
+      {
+        "option_id": "opt_postpone_retry",
+        "title": "方案 C：随机静默延迟 2 小时后低频重试",
+        "description": "暂时休眠，避开高峰期后以更拟人化的高斯抖动延迟再次探活。",
+        "pros": "无需人工干预。",
+        "cons": "若属于永久凭证失效，重试仍可能失败甚至加重风控惩罚。",
+        "is_recommended": false
+      }
+    ],
+    "chosen_option_id": null,
+    "resolved_at": null,
+    "operator_note": ""
+  }
+]

@@ -10,6 +10,8 @@ let latestReportText = "";
 document.addEventListener("DOMContentLoaded", () => {
   refreshAllData();
   fetchSystemStatus();
+  // 5秒自动轮询一次 CDP 端口与系统状态
+  setInterval(fetchSystemStatus, 5000);
 });
 
 // 全局刷新数据
@@ -20,7 +22,7 @@ async function refreshAllData() {
   ]);
 }
 
-// 1. 获取系统真实状态
+// 1. 获取系统真实状态与宿主浏览器 CDP 状态
 async function fetchSystemStatus() {
   try {
     const res = await fetch("/api/status");
@@ -28,6 +30,36 @@ async function fetchSystemStatus() {
     if (data.status === "online") {
       document.getElementById("banner-subtitle").innerText = 
         `上次巡检时间：${data.last_audit_time} | 真实订单：${data.total_orders} 笔 | 真实发票：${data.total_invoices} 笔`;
+
+      // 更新宿主浏览器 CDP 调试端口状态徽章
+      const cdpBadge = document.getElementById("cdp-status-badge");
+      if (cdpBadge) {
+        if (data.browser_ready) {
+          cdpBadge.style.background = "rgba(16, 185, 129, 0.15)";
+          cdpBadge.style.color = "#34d399";
+          cdpBadge.style.borderColor = "rgba(16, 185, 129, 0.4)";
+          cdpBadge.innerText = "● CDP 9222 调试端口已就绪 (可自动接管)";
+        } else {
+          cdpBadge.style.background = "rgba(239, 68, 68, 0.15)";
+          cdpBadge.style.color = "#f87171";
+          cdpBadge.style.borderColor = "rgba(239, 68, 68, 0.4)";
+          cdpBadge.innerText = "● CDP 9222 调试端口未连接 (点击右侧指南开启)";
+        }
+      }
+
+      // 更新最近 Trace 摘要
+      const traceSummaryEl = document.getElementById("pipeline-trace-summary");
+      if (traceSummaryEl) {
+        if (data.latest_trace) {
+          const t = data.latest_trace;
+          const statusText = t.status === "SUCCESS" ? "🟢 采集成功" : "🔴 执行受阻/需诊断";
+          const itemsCount = t.extracted_summary ? t.extracted_summary.total_items_found : 0;
+          const dur = t.total_duration_sec ? `${t.total_duration_sec}秒` : "-";
+          traceSummaryEl.innerHTML = `最近 Trace：<code>${t.trace_id}</code> | 状态：<b>${statusText}</b> | 捕获订单：${itemsCount} 笔 | 耗时：${dur}`;
+        } else {
+          traceSummaryEl.innerText = "暂无执行 Trace 档案，点击右上角【立即执行交叉核验】或运行 start_chrome_debug.bat 启动抓取。";
+        }
+      }
     }
   } catch (err) {
     console.error("无法连接后端状态接口:", err);
@@ -189,7 +221,7 @@ function viewRealInvoice(invoiceNo) {
 async function startAudit() {
   const btn = event.currentTarget;
   btn.disabled = true;
-  btn.innerText = "⏳ 正在对账...";
+  btn.innerHTML = `<span>⏳</span><span>正在接管浏览器采集并核验...</span>`;
 
   try {
     const res = await fetch("/api/audit/run", {
@@ -382,4 +414,183 @@ function switchNav(module) {
   if (module !== "finance") {
     alert(`【${titles[module]}】\n目前运行的是真实生产模式的【财务进项发票对账】模块。\n其他模块已规划完毕，可通过统一接口逐步对接真实数据库！`);
   }
+}
+
+// ==========================================================================
+// 拟人化采集中间过程数据 (AI Trace 档案可视化)
+// ==========================================================================
+
+let tracesCache = [];
+
+async function openTraceModal() {
+  document.getElementById("trace-modal").classList.add("show");
+  await loadTracesList();
+}
+
+function closeTraceModal() {
+  document.getElementById("trace-modal").classList.remove("show");
+}
+
+function openChromeGuideModal() {
+  document.getElementById("chrome-guide-modal").classList.add("show");
+}
+
+function closeChromeGuideModal() {
+  document.getElementById("chrome-guide-modal").classList.remove("show");
+}
+
+async function loadTracesList() {
+  const select = document.getElementById("trace-select");
+  select.innerHTML = "<option value=''>正在获取 Trace 列表...</option>";
+  try {
+    const res = await fetch("/api/traces?limit=10");
+    const data = await res.json();
+    tracesCache = data.traces || [];
+
+    select.innerHTML = "";
+    if (tracesCache.length === 0) {
+      select.innerHTML = "<option value=''>暂无 Trace 档案</option>";
+      document.getElementById("trace-detail-container").innerHTML = `
+        <div style="text-align: center; padding: 40px; color: var(--text-dim);">
+          <div style="font-size: 24px; margin-bottom: 8px;">📭</div>
+          <div>temp/browser_traces 目录下尚无诊断档案</div>
+          <div style="font-size: 12px; margin-top: 6px;">运行采集任务后将自动生成现场切片</div>
+        </div>
+      `;
+      return;
+    }
+
+    tracesCache.forEach((t, idx) => {
+      const opt = document.createElement("option");
+      opt.value = t.trace_id;
+      const statusIcon = t.status === "SUCCESS" ? "🟢" : "🔴";
+      const count = t.extracted_summary ? t.extracted_summary.total_items_found : 0;
+      opt.innerText = `${statusIcon} ${t.trace_id} (${t.platform} | 抓取 ${count} 笔 | ${t.created_at ? t.created_at.substring(0, 19) : ''})`;
+      select.appendChild(opt);
+    });
+
+    renderSelectedTrace();
+  } catch (err) {
+    select.innerHTML = "<option value=''>加载失败</option>";
+    console.error("加载 Trace 档案失败:", err);
+  }
+}
+
+function renderSelectedTrace() {
+  const select = document.getElementById("trace-select");
+  const traceId = select.value;
+  const trace = tracesCache.find(t => t.trace_id === traceId);
+  const container = document.getElementById("trace-detail-container");
+
+  if (!trace) {
+    container.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--text-dim);">未找到选中的 Trace 档案</div>`;
+    return;
+  }
+
+  // 构建步骤列表 HTML
+  let stepsHtml = "";
+  if (trace.steps && trace.steps.length > 0) {
+    stepsHtml = trace.steps.map(s => `
+      <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-weight: 600; color: #fff;">步骤 #${s.step_index}: ${s.step_name}</span>
+          <span style="font-size: 11px; color: #60a5fa; background: rgba(59,130,246,0.15); padding: 2px 6px; border-radius: 4px;">${s.action} (${s.duration_ms}ms)</span>
+        </div>
+        <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">
+          时间戳: ${s.timestamp} ${s.details ? ' | 详情: ' + JSON.stringify(s.details) : ''}
+        </div>
+      </div>
+    `).join("");
+  } else {
+    stepsHtml = `<div style="color: var(--text-dim); font-size: 12px;">无记录的单步时序</div>`;
+  }
+
+  // 构建选择器健康度 HTML
+  let selectorHtml = "";
+  if (trace.selector_health && Object.keys(trace.selector_health).length > 0) {
+    selectorHtml = Object.entries(trace.selector_health).map(([field, h]) => {
+      const isFail = h.status === "FAILED_ZERO_HIT";
+      const badgeStyle = isFail ? "background: rgba(239,68,68,0.2); color: #f87171;" : "background: rgba(16,185,129,0.2); color: #34d399;";
+      return `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-color);">
+          <div>
+            <b style="color: #fff; font-size: 12px;">${field}</b>
+            <div style="font-family: monospace; font-size: 11px; color: var(--text-dim);">${h.selector}</div>
+          </div>
+          <div style="text-align: right;">
+            <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; ${badgeStyle}">${h.status}</span>
+            <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px;">命中: ${h.hit_count} 次</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  } else {
+    selectorHtml = `<div style="color: var(--text-dim); font-size: 12px; padding: 8px;">暂无选择器指标</div>`;
+  }
+
+  // 失败切片 HTML
+  let failureHtml = "";
+  if (trace.failure_context) {
+    const fc = trace.failure_context;
+    failureHtml = `
+      <div style="margin-top: 16px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 14px;">
+        <div style="font-weight: 700; color: #f87171; margin-bottom: 6px;">⚠️ 异常现场诊断切片</div>
+        <div style="font-size: 12px; color: #fca5a5;"><b>受阻步骤：</b> ${fc.failed_step}</div>
+        <div style="font-size: 12px; color: #fca5a5; margin-top: 2px;"><b>错误信息：</b> ${fc.error_message}</div>
+        <div style="font-size: 12px; color: #fca5a5; margin-top: 2px;"><b>推测成因：</b> ${fc.suspected_cause}</div>
+        ${fc.snapshot_html_snippet ? `
+          <div style="margin-top: 8px;">
+            <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 4px;">现场 DOM 快照切片：</div>
+            <pre style="background: rgba(0,0,0,0.5); padding: 8px; border-radius: 4px; font-size: 11px; color: #e2e8f0; overflow-x: auto; white-space: pre-wrap;">${escapeHtml(fc.snapshot_html_snippet)}</pre>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  const summary = trace.extracted_summary || {};
+
+  container.innerHTML = `
+    <!-- Trace 概要卡片 -->
+    <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px; margin-bottom: 16px;">
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; text-align: center;">
+        <div>
+          <div style="font-size: 11px; color: var(--text-dim);">运行状态</div>
+          <div style="font-size: 15px; font-weight: 700; color: ${trace.status === 'SUCCESS' ? '#34d399' : '#f87171'}; margin-top: 4px;">${trace.status}</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; color: var(--text-dim);">发现采购项</div>
+          <div style="font-size: 15px; font-weight: 700; color: #fff; margin-top: 4px;">${summary.total_items_found || 0} 笔</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; color: var(--text-dim);">有效解析订单</div>
+          <div style="font-size: 15px; font-weight: 700; color: #60a5fa; margin-top: 4px;">${summary.valid_records_extracted || 0} 笔</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; color: var(--text-dim);">总耗时</div>
+          <div style="font-size: 15px; font-weight: 700; color: #a78bfa; margin-top: 4px;">${trace.total_duration_sec || 0} 秒</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 拟人化执行时序 -->
+    <div style="margin-bottom: 16px;">
+      <div style="font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 8px;">⏱️ 拟人化操作时序留痕</div>
+      ${stepsHtml}
+    </div>
+
+    <!-- 选择器健康度指标 -->
+    <div style="margin-bottom: 16px;">
+      <div style="font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 8px;">🎯 元素选择器健康度看板</div>
+      <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px;">
+        ${selectorHtml}
+      </div>
+    </div>
+
+    ${failureHtml}
+  `;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

@@ -16,9 +16,9 @@
       "time": "21:00"
     }
   ],
-  "last_harvest_date": "",
-  "last_heal_date": "",
+  "last_harvest_date": "2026-10-11",
+  "last_heal_date": "2026-10-11",
   "updated_at": "2026-10-10T19:18:47.419334",
-  "next_run_full": "2026-10-11 01:30:00",
-  "trigger_time": "01:30"
+  "next_run_full": "2026-10-12 01:00:00",
+  "trigger_time": "01:00"
 }

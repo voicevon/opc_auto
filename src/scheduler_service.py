@@ -117,16 +117,16 @@ class SchedulerManager:
                     harvest_target = cfg.get("harvest_trigger_time", "01:00")
                     heal_target = cfg.get("heal_trigger_time", "05:00")
 
-                    # 1. 业务时钟：执行日常采集与对账巡检
-                    if now_hm == harvest_target and cfg.get("last_harvest_date") != today_str:
-                        print(f"\n[Scheduler] 到达真理源采集时间 {harvest_target}，开始自动执行业务采集与巡检...")
+                    # 1. 业务时钟：执行日常采集与对账巡检 (具备休眠与启动补偿能力)
+                    if (now_hm >= harvest_target) and (cfg.get("last_harvest_date") != today_str):
+                        print(f"\n[Scheduler] 触发真理源采集任务 (设定: {harvest_target}, 当前: {now_hm})，开始自动执行业务采集与巡检...")
                         execute_daily_audit(trigger_type="cron")
                         self.record_run("harvest", today_str)
                         print(f"[Scheduler] 业务采集与巡检执行完毕，已输出面向 AI 的 Trace 档案。")
 
                     # 2. 自愈时钟：复盘分析 Trace，驱动代码与规则自进化
-                    if now_hm == heal_target and cfg.get("last_heal_date") != today_str:
-                        print(f"\n[Scheduler] 到达真理源自愈时间 {heal_target}，AI 自愈引擎开始复盘分析上一次运行的 Trace 档案...")
+                    if (now_hm >= heal_target) and (cfg.get("last_heal_date") != today_str):
+                        print(f"\n[Scheduler] 触发真理源自愈任务 (设定: {heal_target}, 当前: {now_hm})，AI 自愈引擎开始复盘分析上一次运行的 Trace 档案...")
                         try:
                             from .self_healing_engine import SelfHealingEngine
                             healer = SelfHealingEngine()
