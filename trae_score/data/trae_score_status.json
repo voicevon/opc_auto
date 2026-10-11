@@ -1,0 +1,24 @@
+{
+  "history": [
+    {
+      "ok": true,
+      "claimed": false,
+      "credits": 200,
+      "account": "Trae CN",
+      "message": "今日已签到",
+      "checked_at": "2026-10-11T09:22:27.747470",
+      "trigger_type": "manual",
+      "today": "2026-10-11"
+    }
+  ],
+  "last_result": {
+    "ok": true,
+    "claimed": false,
+    "credits": 200,
+    "account": "Trae CN",
+    "message": "今日已签到",
+    "checked_at": "2026-10-11T09:22:27.747470",
+    "trigger_type": "manual",
+    "today": "2026-10-11"
+  }
+}
