@@ -1,41 +1,39 @@
 {
-  "version": "1.0.3",
-  "last_evolved_at": "2026-10-11T09:05:00.163539",
+  "version": "1.1.2",
+  "last_evolved_at": "2026-10-13T10:05:00.000000",
   "platforms": {
     "taobao": {
       "order_card_selectors": [
-        "div[data-id]",
-        ".js-order-item",
-        ".bought-table-mod__tbody",
-        "div.order-list-item"
+        "[id^='shopOrderContainer_']",
+        "div[class*='shopOrderContainer']"
       ],
       "order_id_patterns": [
         "订单号[:：]?\\s*([A-Za-z0-9_-]+)",
-        "data-id=\"([A-Za-z0-9_-]+)\""
+        "id=shopOrderContainer_([0-9]+)"
       ],
       "pay_amount_patterns": [
         "￥?\\s*([0-9]+\\.[0-9]{2})",
         "实付款[:：]?\\s*([0-9]+\\.[0-9]{2})"
       ],
       "store_name_selectors": [
-        ".seller-mod__name",
-        "a[title*='店铺']",
-        ".shop-name",
-        "a.shop-title"
+        "[data-spm='order_shopname']",
+        "a[class*='shopInfoName']"
       ],
       "invoice_btn_selectors": [
         "a.ant-btn-invoice-link",
-        ":has-text('查看发票')",
         "span.ant-btn-link",
         "button.invoice-action",
         "a[href*='invoice']",
-        "a:contains('发票')",
         ".invoice-btn"
       ],
       "invoice_keywords": [
         "查看发票",
         "申请开票",
         "发票详情",
+        "补开发票"
+      ],
+      "invoice_apply_keywords": [
+        "申请开票",
         "补开发票"
       ]
     },
@@ -57,13 +55,33 @@
       ],
       "invoice_btn_selectors": [
         "a[href*='my_invoice']",
-        "a:contains('发票')"
+        "a[href*='invoice']"
       ],
       "invoice_keywords": [
         "我的发票",
         "查看发票",
         "补开"
       ]
+    },
+    "console": {
+      "web_origin": "http://localhost:8088",
+      "index_container_selectors": [
+        "#page-title",
+        "#banner-subtitle",
+        "#invoice-table-body",
+        "#kpi-matched-count",
+        "#kpi-pending-count",
+        ".kpi-card",
+        ".nav-item"
+      ],
+      "core_api_paths": [
+        "/api/status",
+        "/api/stats",
+        "/api/reports/latest",
+        "/api/logs",
+        "/api/traces?limit=1"
+      ],
+      "cdp_tab_url_keyword": "localhost:8088"
     }
   },
   "evolution_history": [
@@ -90,6 +108,46 @@
       "field": "invoice_btn_selectors",
       "new_rule": "a.ant-btn-invoice-link",
       "reason": "从局部骨架 DOM 中反向推导出语义标签 a，替代失效的原选择器 button.old-invoice-btn"
+    },
+    {
+      "version": "1.0.4",
+      "timestamp": "2026-10-12T10:55:00.000000",
+      "platform": "taobao+jd",
+      "field": "invoice_btn_selectors",
+      "new_rule": "purged ':has-text(...)' / ':contains(...)'",
+      "reason": "原生 querySelectorAll 不支持 Playwright/jQuery 专属伪类，混入会导致注入 JS 抛 SyntaxError，选择器规则只允许标准 CSS"
+    },
+    {
+      "version": "1.0.5",
+      "timestamp": "2026-10-12T11:05:00.000000",
+      "platform": "taobao",
+      "field": "order_card_selectors",
+      "new_rule": "[id^='shopOrderContainer_']",
+      "reason": "DOM 锚点探测发现新版淘宝订单卡片容器 ID 为 shopOrderContainer_<订单号>，ID 无 css-modules 哈希后缀，永不漂移；旧类名选择器已全部失效"
+    },
+    {
+      "version": "1.1.0",
+      "timestamp": "2026-10-13T02:30:00.000000",
+      "platform": "console",
+      "field": "index_container_selectors + core_api_paths",
+      "new_rule": "web/index.html 关键容器与核心 API 存活基线接入",
+      "reason": "控制台 (web/index.html + api_handler.py) 为用户观察结果的唯一正式渠道，纳入自愈监控：新增 console 平台基线，由控制台探针双通道 (HTTP 静态 + CDP 渲染) 消费"
+    },
+    {
+      "version": "1.1.1",
+      "timestamp": "2026-10-13T09:39:01.536452",
+      "platform": "taobao",
+      "field": "order_card_selectors",
+      "new_rule": ":has-text('订单号')",
+      "reason": "采用通用语义文本锚点进行全网安全兜底"
+    },
+    {
+      "version": "1.1.2",
+      "timestamp": "2026-10-13T10:05:00.000000",
+      "platform": "taobao",
+      "field": "order_card_selectors",
+      "new_rule": "purged \":has-text('订单号')\" (rollback to v1.0.5 baseline)",
+      "reason": "假自愈回滚：v1.1.1 采集挂接到了 chrome://newtab 非目标页 (兜底挂接任意活跃页所致)，零命中被误判为前端漂移，自愈从无关 DOM 推导出非标准伪类 :has-text() 入库。已删除兜底挂接、新增环境未就绪分流与规则准入闸门，物理回滚至 v1.0.5 基线选择器"
     }
   ]
 }

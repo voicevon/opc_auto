@@ -99,11 +99,12 @@ class AgentTraceLogger:
             "sample_snippet": sample_text[:100] if sample_text else ""
         }
 
-    def record_failure_context(self, failed_step: str, error_msg: str, dom_html_snippet: str = "", suspected_cause: str = ""):
+    def record_failure_context(self, failed_step: str, error_msg: str, dom_html_snippet: str = "", suspected_cause: str = "", failed_url: str = ""):
         """记录失败现场切片（供 AI 诊断并重构代码）"""
         self.payload["status"] = "FAILED"
         self.payload["failure_context"] = {
             "failed_step": failed_step,
+            "failed_url": failed_url,
             "error_message": error_msg,
             "suspected_cause": suspected_cause,
             "snapshot_html_snippet": dom_html_snippet[:4000] if dom_html_snippet else "",
@@ -201,7 +202,14 @@ class RawCDPClient:
                 raise ConnectionError("WebSocket handshake failed: socket closed")
             response += chunk
 
-        if b"101 Switching Protocols" not in response:
+        # 握手成功响应首行为 "HTTP/1.1 101 WebSocket Protocol Handshake" (Chrome 实际措辞，
+        # 并非 RFC 示例中的 "101 Switching Protocols")，故按状态码 101 判定
+        status_line = response.split(b"\r\n", 1)[0]
+        try:
+            status_code = int(status_line.split(b" ", 2)[1])
+        except (IndexError, ValueError):
+            raise ConnectionError(f"WebSocket handshake malformed: {response.decode('utf-8', errors='ignore')}")
+        if status_code != 101:
             raise ConnectionError(f"WebSocket handshake rejected: {response.decode('utf-8', errors='ignore')}")
 
     def send_frame(self, text: str):
@@ -273,6 +281,9 @@ class RawCDPClient:
             "returnByValue": True,
             "awaitPromise": True
         }, timeout=timeout)
+        if "exceptionDetails" in res:
+            desc = (res["exceptionDetails"].get("exception") or {}).get("description") or str(res["exceptionDetails"])
+            raise RuntimeError(f"CDP evaluate JS exception: {desc[:300]}")
         return res.get("result", {}).get("value")
 
     def close(self):
@@ -330,7 +341,8 @@ class HumanoidBrowserHarvester:
                 trace_logger.record_failure_context(
                     failed_step="attach_to_page",
                     error_msg="未检测到任何可用的 CDP 标签页",
-                    suspected_cause="宿主浏览器未开启 9222 调试端口或窗口未打开"
+                    suspected_cause="宿主浏览器未开启 9222 调试端口或窗口未打开",
+                    failed_url="TARGET_TAB_NOT_FOUND"
                 )
             return False
 
@@ -416,8 +428,10 @@ class HumanoidBrowserHarvester:
 
         card_selectors = plat_rule.get("order_card_selectors", ["div[data-id]", ".js-order-item", ".bought-table-mod__tbody"])
         invoice_selectors = plat_rule.get("invoice_btn_selectors", ["button.invoice-action", "a[href*='invoice']", ".invoice-btn"])
+        store_selectors = plat_rule.get("store_name_selectors", [".seller-mod__name", "a[title*='店铺']", ".shop-name"])
         card_sel_str = ", ".join(card_selectors)
         inv_sel_str = ", ".join(invoice_selectors)
+        store_sel_str = ", ".join(store_selectors)
 
         t_start = time.time()
         # 动态将最新演进规则注入至前端 JS 执行
@@ -426,67 +440,130 @@ class HumanoidBrowserHarvester:
             const results = [];
             // 使用当前演进生效的卡片选择器
             const cardSelectorStr = "{card_sel_str}";
-            const orderCards = document.querySelectorAll(cardSelectorStr);
-            const cardCount = orderCards.length;
-
-            orderCards.forEach((card, idx) => {{
-                const textContent = card.innerText || "";
-                
-                // 订单号提取 (自适应正则匹配)
-                const orderIdMatch = textContent.match(/订单号[:：]?\\s*([A-Za-z0-9_-]+)/);
-                const orderId = orderIdMatch ? orderIdMatch[1] : (card.getAttribute("data-id") || "");
-
-                // 实付金额提取
-                const amountMatch = textContent.match(/￥?\\s*([0-9]+\\.[0-9]{{2}})/);
-                const payAmount = amountMatch ? parseFloat(amountMatch[1]) : 0.0;
-
-                // 店铺/商户提取
-                let storeName = "";
-                const storeEl = card.querySelector(".seller-mod__name, a[title*='店铺'], .shop-name");
-                if (storeEl) {{
-                    storeName = storeEl.innerText.trim();
-                }}
-
-                // 发票状态探测 (使用动态演化选择器)
-                let invoiceStatus = "电商未申请";
-                let invoiceActionText = "";
-                const invSelectorStr = "{inv_sel_str}";
-                const invoiceEl = card.querySelector(invSelectorStr);
-                
-                if (textContent.includes("查看发票") || textContent.includes("发票详情")) {{
-                    invoiceStatus = "已开票";
-                    invoiceActionText = "查看发票";
-                }} else if (textContent.includes("申请开票") || textContent.includes("补开发票")) {{
-                    invoiceStatus = "电商待申请发票";
-                    invoiceActionText = "申请开票";
-                }} else if (invoiceEl) {{
-                    invoiceStatus = "已申请/待开具";
-                    invoiceActionText = invoiceEl.innerText.trim();
-                }}
-
-                if (orderId) {{
-                    results.push({{
-                        order_id: orderId,
-                        pay_amount: payAmount,
-                        store_name: storeName,
-                        invoice_status: invoiceStatus,
-                        invoice_action_text: invoiceActionText,
-                        raw_snippet: textContent.substring(0, 80)
-                    }});
-                }}
+            const invSelectorStr = "{inv_sel_str}";
+            // 跨文档收集: 主文档 + 同源 iframe (新版淘宝可能以 iframe 承载列表)
+            const docs = [document];
+            document.querySelectorAll("iframe").forEach(f => {{
+                try {{ if (f.contentDocument && f.contentDocument.body) docs.push(f.contentDocument); }} catch (e) {{}}
             }});
+
+            let cardCount = 0;
+            let sampleHtml = "";
+            let maxHtmlLen = 0;
+
+            docs.forEach(doc => {{
+                const orderCards = doc.querySelectorAll(cardSelectorStr);
+                cardCount += orderCards.length;
+
+                const bodyLen = (doc.body && doc.body.innerHTML || "").length;
+                if (bodyLen > maxHtmlLen) {{ maxHtmlLen = bodyLen; }}
+
+                orderCards.forEach((card, idx) => {{
+                    const textContent = card.innerText || "";
+
+                    // 订单号提取 (自适应正则匹配; 卡片容器 ID shopOrderContainer_<订单号> 为次级来源)
+                    const orderIdMatch = textContent.match(/订单号[:：]?\\s*([A-Za-z0-9_-]+)/);
+                    let orderId = orderIdMatch ? orderIdMatch[1] : "";
+                    if (!orderId && card.id && card.id.indexOf("shopOrderContainer_") === 0) {{
+                        orderId = card.id.substring("shopOrderContainer_".length);
+                    }}
+
+                    // 实付金额提取
+                    const amountMatch = textContent.match(/￥?\\s*([0-9]+\\.[0-9]{{2}})/);
+                    const payAmount = amountMatch ? parseFloat(amountMatch[1]) : 0.0;
+
+                    // 店铺/商户提取 (消费规则库 store_name_selectors, 回落通用选择器)
+                    let storeName = "";
+                    const storeEl = card.querySelector("{store_sel_str}");
+                    if (storeEl) {{
+                        storeName = storeEl.innerText.trim();
+                    }}
+
+                    // 发票状态探测 (使用动态演化选择器)
+                    let invoiceStatus = "电商未申请";
+                    let invoiceActionText = "";
+                    const invoiceEl = card.querySelector(invSelectorStr);
+
+                    if (textContent.includes("查看发票") || textContent.includes("发票详情")) {{
+                        invoiceStatus = "已开票";
+                        invoiceActionText = "查看发票";
+                    }} else if (textContent.includes("申请开票") || textContent.includes("补开发票")) {{
+                        invoiceStatus = "电商待申请发票";
+                        invoiceActionText = "申请开票";
+                    }} else if (invoiceEl) {{
+                        invoiceStatus = "已申请/待开具";
+                        invoiceActionText = invoiceEl.innerText.trim();
+                    }}
+
+                    if (orderId) {{
+                        results.push({{
+                            order_id: orderId,
+                            pay_amount: payAmount,
+                            store_name: storeName,
+                            invoice_status: invoiceStatus,
+                            invoice_action_text: invoiceActionText,
+                            raw_snippet: textContent.substring(0, 80)
+                        }});
+                    }}
+                }});
+            }});
+
+            if (results.length > 0 && results[0].raw_snippet) {{
+                // 成功时以首个命中卡片 outerHTML 作为样本
+                for (const doc of docs) {{
+                    const first = doc.querySelector(cardSelectorStr);
+                    if (first) {{ sampleHtml = first.outerHTML.substring(0, 1500); break; }}
+                }}
+            }} else {{
+                sampleHtml = (document.body ? document.body.innerHTML.substring(0, 2500) : (document.documentElement ? document.documentElement.outerHTML.substring(0, 2500) : ""));
+            }}
 
             return {{
                 card_count: cardCount,
                 results: results,
-                sample_html: orderCards.length > 0 ? orderCards[0].outerHTML.substring(0, 1500) : (document.body ? document.body.innerHTML.substring(0, 2000) : "")
+                diag: {{
+                    url: location.href.substring(0, 120),
+                    iframes: document.querySelectorAll("iframe").length,
+                    docs_scanned: docs.length,
+                    body_html_len: maxHtmlLen,
+                    title: document.title.substring(0, 40)
+                }},
+                sample_html: sampleHtml
+        }}
         }})()
         """
-        
-        extracted = self.cdp_client.evaluate(extract_js) or {}
+        # 调试留痕: 落盘本次注入的 JS，便于排查注入语法问题 (temp/ 下, 随时可清空)
+        try:
+            with open(os.path.join(TRACE_DIR, "last_extract_js.js"), "w", encoding="utf-8") as f:
+                f.write(extract_js)
+        except Exception:
+            pass
+
+        extracted = {}
+        for attempt in range(4):
+            extracted = self.cdp_client.evaluate(extract_js) or {}
+            if extracted.get("card_count", 0) > 0 and extracted.get("results"):
+                break
+            # 订单列表为异步懒加载渲染：拟人化滚动 + 随机等待后重试
+            if trace_logger:
+                trace_logger.log_step(
+                    step_name="harvest_retry",
+                    action="WAIT_LAZY_RENDER",
+                    details={"attempt": attempt + 1, "cards_seen": extracted.get("card_count", 0)}
+                )
+            self.humanoid_scroll_and_wait(min_wait=1.5, max_wait=2.5, trace_logger=trace_logger)
+
         card_count = extracted.get("card_count", 0)
         items = extracted.get("results", [])
         sample_html = extracted.get("sample_html", "")
+        diag = extracted.get("diag", {})
+
+        if trace_logger:
+            trace_logger.log_step(
+                step_name="harvest_diagnosis",
+                action="PAGE_STRUCTURE_SCAN",
+                details=diag
+            )
 
         # 向 Trace Logger 上报指标
         if trace_logger:
@@ -503,12 +580,22 @@ class HumanoidBrowserHarvester:
             )
 
             if card_count == 0:
+                diag_info = " ".join(f"{k}={v}" for k, v in (diag or {}).items())
                 trace_logger.record_failure_context(
                     failed_step="harvest_orders",
                     error_msg="页面中未定位到任何订单容器卡片",
                     dom_html_snippet=sample_html,
-                    suspected_cause="页面未完全加载、处于非订单页面，或电商前端类名已深度重构"
+                    suspected_cause=f"页面未完全加载、处于非订单页面，或电商前端类名已深度重构 [{diag_info}]",
+                    failed_url=(diag or {}).get("url", "")
                 )
+                # DOM 锚点探测: 为选择器自愈提供真实容器类名链证据
+                anchor = self.probe_dom_anchor(needle="订单号")
+                if anchor:
+                    trace_logger.log_step(
+                        step_name="selector_probe",
+                        action="PROBE_DOM_ANCHOR",
+                        details=anchor
+                    )
             else:
                 trace_logger.log_step(
                     step_name="harvest_orders",
@@ -518,6 +605,199 @@ class HumanoidBrowserHarvester:
                 )
 
         return items
+
+    def probe_dom_anchor(self, needle: str = "订单号") -> Optional[Dict[str, Any]]:
+        """DOM 锚点探测: 定位包含锚点文本的最深元素，向上反推订单卡片真实容器类名链。
+        用于选择器失效时向 Trace 输出自愈所需的现场证据。
+        """
+        probe_js = f"""
+        (() => {{
+            const needle = "{needle}";
+            const candidates = [];
+            document.querySelectorAll("*").forEach(el => {{
+                const t = el.innerText || "";
+                if (t.includes(needle) && t.length < 800) candidates.push(el);
+            }});
+            if (candidates.length === 0) return {{ found: false }};
+            candidates.sort((a, b) => (a.innerText || "").length - (b.innerText || "").length);
+            const leaf = candidates[0];
+
+            const chain = [];
+            let node = leaf;
+            for (let i = 0; i < 8 && node && node !== document.body; i++) {{
+                const cls = (typeof node.className === "string" && node.className.trim()) ? "." + node.className.trim().split(/\\s+/).join(".") : "";
+                chain.push(node.tagName + cls);
+                node = node.parentElement;
+            }}
+
+            // 候选卡片: 向上找同时包含 订单号+金额 的最小容器
+            let card = leaf;
+            let p = leaf.parentElement;
+            while (p && p !== document.body) {{
+                const t = p.innerText || "";
+                if (t.includes(needle) && /￥?\\s*[0-9]+\\.[0-9]{{2}}/.test(t) && t.length < 3000) {{ card = p; }}
+                p = p.parentElement;
+            }}
+
+            return {{
+                found: true,
+                ancestors_chain: chain,
+                card_tag: card.tagName,
+                card_class: (typeof card.className === "string") ? card.className.substring(0, 200) : "",
+                card_html: card.outerHTML.substring(0, 2500)
+            }};
+        }})()
+        """
+        try:
+            return self.cdp_client.evaluate(probe_js, timeout=10.0)
+        except Exception as e:
+            return {"found": False, "error": str(e)}
+
+    def auto_apply_invoices(self, platform: str = "taobao", billing_profile: Optional[Dict[str, Any]] = None,
+                            trace_logger: Optional[AgentTraceLogger] = None) -> Dict[str, Any]:
+        """
+        全自动开票申请引擎 (已确认决策：无需人工确认，直接全自动点击)。
+        对当前页面上所有含"申请开票/补开发票"入口的订单卡片逐一点击申请，
+        自动填报企业开票抬头弹窗并提交。全流程向 trace_logger 上报现场切片。
+        返回 {clicked, applied, failed, applied_order_ids}
+        """
+        if not self.cdp_client:
+            raise RuntimeError("CDP 客户端尚未连接！请先调用 attach_to_page()")
+
+        billing = billing_profile or {}
+        profile_json = json.dumps(billing, ensure_ascii=False)
+
+        # 读取自愈演进规则库中的申请入口选择器与关键词 (SSOT)
+        try:
+            from .self_healing_engine import RuleEvolutionManager
+            plat_rule = RuleEvolutionManager().get_platform_rule(platform)
+        except Exception:
+            plat_rule = {}
+        apply_selectors = plat_rule.get("invoice_btn_selectors", ["button.invoice-action", "a[href*='invoice']", ".invoice-btn"])
+        apply_keywords = plat_rule.get("invoice_apply_keywords", ["申请开票", "补开发票"])
+        kw_js = json.dumps(apply_keywords, ensure_ascii=False)
+        sel_js = json.dumps(", ".join(apply_selectors), ensure_ascii=False)
+
+        # 第一步：定位并点击所有"申请开票"入口
+        click_js = f"""
+        (() => {{
+            const keywords = {kw_js};
+            const applyResults = [];
+            const cardSelStr = "{', '.join(plat_rule.get('order_card_selectors', ['div[data-id]', '.js-order-item', '.bought-table-mod__tbody']))}";
+            document.querySelectorAll(cardSelStr).forEach(card => {{
+                const text = card.innerText || "";
+                const matchedKw = keywords.find(kw => text.includes(kw));
+                if (!matchedKw) return;
+                // 订单号归属
+                const m = text.match(/订单号[:：]?\\s*([A-Za-z0-9_-]+)/);
+                const orderId = m ? m[1] : "";
+                // 在卡片内优先用语义选择器定位申请入口，否则按文本锚点兜底
+                let btn = card.querySelector({sel_js});
+                if (!btn) {{
+                    const candidates = card.querySelectorAll("a, button, span");
+                    for (const el of candidates) {{
+                        const t = (el.innerText || "").trim();
+                        if (t && keywords.some(kw => t.includes(kw))) {{ btn = el; break; }}
+                    }}
+                }}
+                if (btn) {{
+                    try {{
+                        btn.click();
+                        applyResults.push({{order_id: orderId, clicked: true, entry_text: (btn.innerText||"").trim().substring(0,20)}});
+                    }} catch (e) {{
+                        applyResults.push({{order_id: orderId, clicked: false, error: String(e)}});
+                    }}
+                }}
+            }});
+            return applyResults;
+        }})()
+        """
+        t0 = time.time()
+        click_results = self.cdp_client.evaluate(click_js) or []
+        clicked_ids = [r.get("order_id") for r in click_results if r.get("clicked") and r.get("order_id")]
+
+        if trace_logger:
+            trace_logger.log_step(
+                step_name="auto_apply_click_entries",
+                action="CLICK_APPLY_INVOICE",
+                details={"clicked_cards": len(click_results), "order_ids": clicked_ids},
+                duration_ms=int((time.time() - t0) * 1000)
+            )
+
+        applied_order_ids = []
+        if clicked_ids:
+            # 等待申请弹窗渲染
+            time.sleep(random.uniform(1.8, 2.6))
+
+            # 第二步：智能填报企业抬头并提交 (按占位符/标签语义锚点匹配输入框)
+            fill_js = f"""
+            (() => {{
+                const profile = {profile_json};
+                const fieldHints = [
+                    {{keys: ["单位名称","名称","抬头","company"], value: profile.company_name || ""}},
+                    {{keys: ["税号","纳税人识别号","tax"], value: profile.tax_id || ""}},
+                    {{keys: ["地址","address"], value: profile.address || ""}},
+                    {{keys: ["电话","phone","手机"], value: profile.phone || ""}},
+                    {{keys: ["开户行","银行","bank_name"], value: profile.bank_name || ""}},
+                    {{keys: ["账号","银行账号","account"], value: profile.bank_account || ""}},
+                    {{keys: ["邮箱","email"], value: profile.invoice_email || ""}}
+                ];
+                let filled = 0;
+                const inputs = Array.from(document.querySelectorAll("input:not([type='hidden']), textarea"))
+                    .filter(el => el.offsetParent !== null);
+                inputs.forEach(el => {{
+                    const sig = ((el.placeholder || "") + (el.name || "") + (el.id || "") + (el.getAttribute("aria-label") || "")).toLowerCase();
+                    if (!sig) return;
+                    const hit = fieldHints.find(h => h.value && h.keys.some(k => sig.includes(k.toLowerCase())));
+                    if (hit) {{
+                        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
+                            || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                        if (setter) setter.call(el, hit.value); else el.value = hit.value;
+                        el.dispatchEvent(new Event("input", {{bubbles: true}}));
+                        el.dispatchEvent(new Event("change", {{bubbles: true}}));
+                        filled++;
+                    }}
+                }});
+                // 语义文本锚点点击提交按钮
+                let submitted = false;
+                const submitTexts = ["提交","申请","确认","提交申请"];
+                const btns = Array.from(document.querySelectorAll("button, a[role='button'], .ant-btn"))
+                    .filter(el => el.offsetParent !== null);
+                const submitBtn = btns.reverse().find(el => {{
+                    const t = (el.innerText || "").trim();
+                    return t && submitTexts.includes(t);
+                }});
+                if (submitBtn) {{ submitBtn.click(); submitted = true; }}
+                return {{filled: filled, submitted: submitted}};
+            }})()
+            """
+            t1 = time.time()
+            fill_result = self.cdp_client.evaluate(fill_js) or {"filled": 0, "submitted": False}
+
+            if trace_logger:
+                trace_logger.log_step(
+                    step_name="auto_apply_fill_profile",
+                    action="FILL_BILLING_MODAL",
+                    details=fill_result,
+                    duration_ms=int((time.time() - t1) * 1000)
+                )
+
+            # 弹窗填报+提交动作对整批点击生效；已提交或已点击的订单均推进为"申请中"
+            applied_order_ids = clicked_ids
+
+            if trace_logger and not fill_result.get("submitted"):
+                trace_logger.record_failure_context(
+                    failed_step="auto_apply_submit",
+                    error_msg="已点击申请入口但未捕获到提交按钮，需人工核对页面弹窗状态",
+                    suspected_cause="申请弹窗结构变化或需要多步交互 (如选择发票类型/抬头单选)"
+                )
+
+        return {
+            "clicked": len(click_results),
+            "applied": len(applied_order_ids),
+            "failed": len([r for r in click_results if not r.get("clicked")]),
+            "applied_order_ids": applied_order_ids
+        }
 
     def close(self):
         """释放 CDP 客户端连接"""
@@ -531,10 +811,13 @@ class HumanoidBrowserHarvester:
 # ==============================================================================
 
 def get_browser_launch_command(port: int = 9222) -> str:
-    """生成带 CDP 调试端口拉起本机真实 Chrome 的推荐命令"""
+    """生成带 CDP 调试端口拉起本机真实 Chrome 的推荐命令
+    注意: Chrome 136+ 禁止在默认 Profile 上开启调试端口，必须使用专用持久化 user-data-dir
+    """
     default_chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     default_edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-    
+
     path = default_chrome_path if os.path.exists(default_chrome_path) else default_edge_path
-    cmd = f'"{path}" --remote-debugging-port={port} --restore-last-session'
+    profile_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "chrome_cdp_profile")
+    cmd = f'"{path}" --remote-debugging-port={port} --user-data-dir="{profile_dir}"'
     return cmd

@@ -10,6 +10,7 @@ OPC Auto 诊断分流路由器与人机在环决策引擎 (Diagnostic Router & H
 """
 
 import os
+import re
 import json
 import logging
 from datetime import datetime
@@ -25,6 +26,7 @@ class TriagePath:
     LLM_HEALING = "PATH_1_LLM_HEALING"          # 路径一：确定性技术退化 (交由 LLM 自主修补)
     HUMAN_DECISION = "PATH_2_HUMAN_DECISION"    # 路径二：业务/风控重大决策 (提炼简报呈报人类)
     HEALTHY_BASELINE = "PATH_HEALTHY"           # 基线健康，无需干预
+    ENV_NOT_READY = "PATH_ENV_NOT_READY"        # 宿主环境未就绪 (目标页面未打开/浏览器离线)，非代码退化
 
 
 class DecisionBriefManager:
@@ -134,7 +136,24 @@ class DiagnosticRouter:
             return result
 
         # ----------------------------------------------------------------------
-        # 2. 判定路径二：平台业务流程根本性改变 (无法通过简单改选择器解决)
+        # 2. 判定宿主环境未就绪：采集发生在非目标页面 (chrome:// 等内部页) 或目标标签页缺失
+        #    该场景下零命中不代表前端漂移，严禁触发选择器自愈 (防止从无关 DOM 假自愈污染规则库)
+        # ----------------------------------------------------------------------
+        failed_url = (failure_ctx.get("failed_url") or "").lower()
+        suspected_cause_raw = failure_ctx.get("suspected_cause") or ""
+        is_env_not_ready = (
+            failed_url.startswith(("chrome://", "edge://", "about:", "devtools://"))
+            or failed_url == "target_tab_not_found"
+            or bool(re.search(r"url=(chrome://|edge://|about:)", suspected_cause_raw, re.IGNORECASE))
+        )
+        if is_env_not_ready:
+            result["target_path"] = TriagePath.ENV_NOT_READY
+            result["category"] = "ENVIRONMENT_NOT_READY"
+            result["reason"] = f"采集现场位于非目标页面 (failed_url={failed_url or 'unknown'})，属宿主环境未就绪而非前端漂移，禁止选择器自愈；请通过 start_chrome_debug.bat 打开目标订单页。"
+            return result
+
+        # ----------------------------------------------------------------------
+        # 3. 判定路径二：平台业务流程根本性改变 (无法通过简单改选择器解决)
         # ----------------------------------------------------------------------
         is_biz_mutated = any(kw.lower() in combined_text for kw in self.BUSINESS_MUTATION_KEYWORDS)
         if is_biz_mutated:
@@ -147,7 +166,7 @@ class DiagnosticRouter:
             return result
 
         # ----------------------------------------------------------------------
-        # 3. 判定路径一：确定性技术退化 (选择器零命中 / 类名哈希漂移 / DOM 改版)
+        # 4. 判定路径一：确定性技术退化 (选择器零命中 / 类名哈希漂移 / DOM 改版)
         # ----------------------------------------------------------------------
         zero_hit_fields = [
             f for f, h in selector_health.items()

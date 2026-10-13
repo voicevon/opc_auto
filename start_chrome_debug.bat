@@ -16,11 +16,13 @@ if not exist %CHROME_PATH% set CHROME_PATH="C:\Program Files (x86)\Google\Chrome
 if not exist %CHROME_PATH% set CHROME_PATH="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 echo 正在启动浏览器: %CHROME_PATH%
-start "" %CHROME_PATH% --remote-debugging-port=9222 --restore-last-session "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
+echo [说明] Chrome 136+ 禁止在默认 Profile 上开启 CDP 调试端口，
+echo        故使用项目专用持久化 Profile (data\chrome_cdp_profile)，登录态永久保存。
+start "" %CHROME_PATH% --remote-debugging-port=9222 --user-data-dir=c:\software\opc_auto\data\chrome_cdp_profile "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm"
 
 echo.
 echo [就绪] 浏览器已拉起并开启 9222 端口！
-echo -> 请在打开的浏览器中确保已登录淘宝/京东账号，并打开『已买到的宝贝』订单列表页。
+echo -> 首次使用请用手机淘宝扫码登录一次，此后该 Profile 永久免登录。
 echo -> 保持该浏览器窗口开启，系统在定时或手动核验时将自动接管采集。
 echo ======================================================================
 timeout /t 5 >nul

@@ -14,6 +14,7 @@
 | **04** | **面向老板与面向代码的双层自愈体系总结** | 用户双层架构思想总结：上层面向老板与AI、下层执行打交道与机器留痕，以及可行性深度评估 | [04_面向老板与面向代码的双层自愈体系总结.md](file:///d:/Software/opc_auto/wiki/04_面向老板与面向代码的双层自愈体系总结.md) |
 | **05** | **自愈引擎与LLM交互规范_上下文蒸馏与通道设计** | 外部 AI 求解通道技术选型、海量日志剪枝丢弃清单与局部骨架 DOM 蒸馏提取机制 | [05_自愈引擎与LLM交互规范_上下文蒸馏与通道设计.md](file:///d:/Software/opc_auto/wiki/05_自愈引擎与LLM交互规范_上下文蒸馏与通道设计.md) |
 | **06** | **CDP协议详解：非Web开发者的浏览器接管指南** | 面向系统与后端开发者的降维解析：底层调试机制、零特征防风控原理及纯标准库实现 | [06_CDP协议详解_非Web开发者的浏览器接管与自动化指南.md](file:///d:/Software/opc_auto/wiki/06_CDP协议详解_非Web开发者的浏览器接管与自动化指南.md) |
+| **07** | **WorkBuddy开放API调研：TokenHub额度接入Trae指南** | 腾讯 WorkBuddy 开放 API 调研：TokenHub API Key 入口、OpenAI 兼容端点及"一个 IDE 双 Token 池"落地步骤 | [07_WorkBuddy开放API调研_TokenHub额度接入Trae指南.md](file:///c:/software/opc_auto/wiki/07_WorkBuddy开放API调研_TokenHub额度接入Trae指南.md) |
 
 ---
 

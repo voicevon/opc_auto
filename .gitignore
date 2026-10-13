@@ -8,3 +8,6 @@ __pycache__/
 
 # 运行日志
 *.log
+
+# Chrome CDP 专用 Profile（chrome_cdp_profile，含登录态 Cookie，禁止入库）
+data/chrome_cdp_profile/

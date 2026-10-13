@@ -94,16 +94,12 @@ def run():
             return
         raise
 
-    # 成功绑定端口后，启动 24/7 守护定时调度器
-    from src.scheduler_service import scheduler_manager
-    scheduler_manager.start()
-
     with httpd:
         url = f"http://localhost:{PORT}"
         print(f"\n=======================================================")
         print(f"[OPC Auto] 真实生产后端与 Web 门户已启动 (24小时服务)！")
         print(f"数据模式: 100% 真实数据 (已绑定真实企业抬头)")
-        print(f"后台调度: 已启动守护线程 (可动态配置定时时间)")
+        print(f"定时调度: 由 Trae 外部自动化托管 (每日凌晨执行 python -m src.cron_daily)")
         print(f"访问地址: {url}")
         print(f"数据库: opc_auto.db")
         print(f"=======================================================\n")
@@ -112,8 +108,6 @@ def run():
             httpd.serve_forever()
         except KeyboardInterrupt:
             print("\n服务已停止。")
-        finally:
-            scheduler_manager.stop()
 
 if __name__ == "__main__":
     run()

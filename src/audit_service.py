@@ -52,10 +52,8 @@ def execute_daily_audit(trigger_type="manual"):
         harvest_status_summary["message"] = "Chrome 9222 调试端口未开放，未能挂接已登录会话；已生成诊断 Trace 档案供自愈分析"
     else:
         try:
+            # 仅挂接淘宝订单页专属标签页，严禁兜底挂接任意活跃页 (避免在 chrome://newtab 等非目标页误采集)
             attached = harvester.attach_to_page(url_keyword="taobao", trace_logger=trace_logger)
-            if not attached:
-                # 尝试挂接任意当前活跃的标签页
-                attached = harvester.attach_to_page(url_keyword="", trace_logger=trace_logger)
 
             if attached:
                 harvest_status_summary["cdp_connected"] = True
@@ -93,14 +91,47 @@ def execute_daily_audit(trigger_type="manual"):
                         """, (order_no, now_str, item_desc, pay_amt, seller, inv_status, f"CDP采集状态: {raw_status}"))
                     conn_orders.commit()
                     conn_orders.close()
+
+                    # 2.1 全自动点击申请开票 (已确认决策：无需人工确认)
+                    cursor_profile = get_db_connection()
+                    prof_row = cursor_profile.execute(
+                        "SELECT * FROM company_billing_profile ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                    cursor_profile.close()
+                    billing_profile = dict(prof_row) if prof_row else {}
+
+                    try:
+                        apply_result = harvester.auto_apply_invoices(
+                            platform="taobao", billing_profile=billing_profile, trace_logger=trace_logger
+                        )
+                        harvest_status_summary["auto_apply"] = apply_result
+                        if apply_result.get("applied"):
+                            conn_apply = get_db_connection()
+                            cur_apply = conn_apply.cursor()
+                            for oid in apply_result["applied_order_ids"]:
+                                cur_apply.execute("""
+                                UPDATE procurement_orders
+                                SET invoice_status = 'applying', apply_time = ?
+                                WHERE order_no = ? AND invoice_status = 'unapplied'
+                                """, (now_str, oid))
+                            conn_apply.commit()
+                            conn_apply.close()
+                            harvest_status_summary["message"] += f"；已全自动提交开票申请 {apply_result['applied']} 笔"
+                    except Exception as apply_err:
+                        trace_logger.record_failure_context(
+                            failed_step="auto_apply_invoices",
+                            error_msg=str(apply_err),
+                            suspected_cause="全自动开票申请执行期间异常"
+                        )
             else:
                 trace_logger.record_failure_context(
                     failed_step="attach_to_page",
-                    error_msg="未在浏览器中找到可挂接的订单页面标签",
-                    suspected_cause="请确保浏览器中已打开淘宝『已买到的宝贝』页面"
+                    error_msg="未在浏览器中找到淘宝『已买到的宝贝』订单页标签",
+                    suspected_cause="宿主环境未就绪：请运行 start_chrome_debug.bat 打开订单页 (脚本会自动导航)",
+                    failed_url="TARGET_TAB_NOT_FOUND"
                 )
                 trace_logger.finish(extracted_items=[], success=False)
-                harvest_status_summary["message"] = "未在 Chrome 中定位到订单标签页"
+                harvest_status_summary["message"] = "未在 Chrome 中定位到淘宝订单页标签页 (环境未就绪，非前端漂移)"
         except Exception as e:
             trace_logger.record_failure_context(
                 failed_step="harvest_execution",

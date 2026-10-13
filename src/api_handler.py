@@ -161,6 +161,16 @@ def handle_api_request(method, path, body_bytes):
             return 200, rep
         return 200, {"message": "当前尚未生成任何日报，请先执行巡检任务", "markdown_content": "# 暂无日报\n尚未执行巡检或数据库中无数据。"}
 
+    # 5.5 电子税务局进项底账手动导入 (Excel/CSV 过渡方案)
+    if route == "/api/invoices/import" and method == "POST":
+        from .invoice_import_service import import_invoice_file
+        filename = str(body.get("filename", "")).strip()
+        content_b64 = str(body.get("content_base64", "")).strip()
+        if not filename or not content_b64:
+            return 400, {"error": "缺少 filename 或 content_base64 参数"}
+        result = import_invoice_file(filename, content_b64)
+        return (200 if result.get("success") else 400), result
+
     # 8. 真实触发订单开票申请状态变更
     if route == "/api/orders/apply-invoice" and method == "POST":
         order_no = body.get("order_no")
@@ -216,19 +226,6 @@ def handle_api_request(method, path, body_bytes):
             conn.commit()
             conn.close()
             return 200, {"success": True, "message": "企业开票信息更新成功"}
-
-    # 11. 读取/修改 24小时定时巡检时间配置
-    if route == "/api/config/scheduler":
-        from .scheduler_service import scheduler_manager
-        if method == "GET":
-            cfg = scheduler_manager.get_config()
-            return 200, cfg
-        elif method == "POST":
-            enabled = body.get("enabled", True)
-            harvest_time = body.get("harvest_trigger_time") or body.get("trigger_time", "01:00")
-            heal_time = body.get("heal_trigger_time")
-            updated = scheduler_manager.update_config(enabled, harvest_time, heal_time)
-            return 200, {"success": True, "message": f"定时采集时间已更新为每日 {harvest_time}", "config": updated}
 
     # 12. 读取最近巡检日志
     if route == "/api/logs" and method == "GET":

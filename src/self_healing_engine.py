@@ -85,6 +85,26 @@ class RuleEvolutionManager:
                     "a:contains('发票')"
                 ],
                 "invoice_keywords": ["我的发票", "查看发票", "补开"]
+            },
+            "console": {
+                "web_origin": "http://localhost:8088",
+                "index_container_selectors": [
+                    "#page-title",
+                    "#banner-subtitle",
+                    "#invoice-table-body",
+                    "#kpi-matched-count",
+                    "#kpi-pending-count",
+                    ".kpi-card",
+                    ".nav-item"
+                ],
+                "core_api_paths": [
+                    "/api/status",
+                    "/api/stats",
+                    "/api/reports/latest",
+                    "/api/logs",
+                    "/api/traces?limit=1"
+                ],
+                "cdp_tab_url_keyword": "localhost:8088"
             }
         },
         "evolution_history": []
@@ -118,10 +138,18 @@ class RuleEvolutionManager:
         rules = self.load_rules()
         return rules.get("platforms", {}).get(platform, self.DEFAULT_RULES["platforms"].get(platform, {}))
 
+    # 非标准 CSS 伪类黑名单：原生 querySelectorAll 不支持，混入将导致注入 JS 抛 SyntaxError
+    # (演化史 v1.0.4 已明令清除，此处为准入闸门，防止自愈推导再次引入)
+    BANNED_SELECTOR_FRAGMENTS = (":has-text(", ":contains(", ":text(")
+
     def update_rule_with_evolution(self, platform: str, updated_field: str, new_selector_or_pattern: str, reason: str) -> str:
         """
         演化更新特定平台的某个选择器或正则规则，并记录版本与日志
         """
+        lowered = (new_selector_or_pattern or "").lower()
+        if any(ban in lowered for ban in self.BANNED_SELECTOR_FRAGMENTS):
+            raise ValueError(f"选择器包含非标准伪类 (原生 querySelectorAll 不支持): {new_selector_or_pattern}")
+
         rules = self.load_rules()
         plat_rules = rules.setdefault("platforms", {}).setdefault(platform, {})
         target_list = plat_rules.setdefault(updated_field, [])
@@ -179,7 +207,7 @@ class SelfHealingEngine:
         if not files:
             return None
         files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-        
+
         for fp in files:
             try:
                 with open(fp, "r", encoding="utf-8") as f:
@@ -189,6 +217,39 @@ class SelfHealingEngine:
             except Exception:
                 continue
         return None
+
+    def find_all_traces(self, limit: int = 6) -> List[Dict[str, Any]]:
+        """按修改时间倒序检索最近的若干 Trace 诊断档案 (多平台复盘输入)"""
+        if not os.path.exists(TRACE_DIR):
+            return []
+        files = [os.path.join(TRACE_DIR, f) for f in os.listdir(TRACE_DIR) if f.endswith(".json")]
+        files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        traces = []
+        for fp in files[:limit]:
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    traces.append(json.load(f))
+            except Exception:
+                continue
+        return traces
+
+    def analyze_all_and_heal(self, limit: int = 6) -> List[Dict[str, Any]]:
+        """
+        复盘今日生成的全部 Trace 档案 (电商采集 + 控制台探针等多平台)，
+        逐档案诊断与自愈，返回逐 Trace 诊断报告列表。
+        仅消化当日档案，避免每日重复分析历史现场。
+        """
+        today = datetime.now().date()
+        reports = []
+        for trace in self.find_all_traces(limit=limit):
+            created_at = trace.get("created_at") or ""
+            try:
+                if datetime.fromisoformat(created_at).date() != today:
+                    continue
+            except ValueError:
+                continue
+            reports.append(self.analyze_and_heal(trace))
+        return reports
 
     def analyze_and_heal(self, trace_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -207,6 +268,7 @@ class SelfHealingEngine:
             "trace_analyzed": trace_data.get("trace_id") if trace_data else "None",
             "platform": trace_data.get("platform", "unknown") if trace_data else "unknown",
             "is_healed": False,
+            "health_status": "unknown",
             "diagnoses": [],
             "actions_taken": [],
             "new_rule_version": None
@@ -214,6 +276,7 @@ class SelfHealingEngine:
 
         if not trace_data:
             report["diagnoses"].append("未检测到任何待分析的 Trace 档案")
+            report["health_status"] = "no_trace"
             return report
 
         # ======================================================================
@@ -234,10 +297,27 @@ class SelfHealingEngine:
             report["actions_taken"].append(f"已阻断自动代码修改，已生成《决策简报》(ID: {triage_res.get('decision_brief', {}).get('id')})，挂起任务等待人类拍板定夺。")
             return report
 
+        if triage_res["target_path"] == TriagePath.ENV_NOT_READY:
+            # 宿主环境未就绪 (采集发生在非目标页面)：零命中非前端漂移，严禁选择器自愈污染规则库
+            report["is_healed"] = False
+            report["health_status"] = "env_not_ready"
+            report["diagnoses"].append(f"【宿主环境未就绪】{triage_res['reason']}")
+            report["actions_taken"].append("已阻止本轮选择器自愈 (环境态零命中不构成前端漂移证据)，请打开目标订单页后重新采集。")
+            return report
+
         platform = trace_data.get("platform", "taobao")
         selector_health = trace_data.get("selector_health", {})
         failure_ctx = trace_data.get("failure_context") or {}
         html_snippet = failure_ctx.get("snapshot_html_snippet", "")
+
+        # 防假阳性：采集离线/失败时 Trace 无任何选择器数据，必须如实报告而非谎报健康
+        if not selector_health:
+            report["health_status"] = "no_selector_data"
+            report["diagnoses"].append(
+                f"本轮 Trace 无任何选择器健康数据 (采集离线或失败: {failure_ctx.get('error_message', '未知原因')})，"
+                "自愈引擎无诊断输入，本轮跳过规则重构。"
+            )
+            return report
 
         # 遍历选择器健康度，探测失效点 (路径一：确定性技术退化处理)
         for field, health in selector_health.items():
@@ -246,6 +326,18 @@ class SelfHealingEngine:
             hit_count = health.get("hit_count", 0)
 
             if status == "FAILED_ZERO_HIT" or hit_count == 0:
+                # 控制台属自有代码：严禁把探针基线自动改成"现状"来制造假自愈，
+                # 必须保留现场，由 LLM/人工修复 web/index.html、app.js 或探针基线本身
+                if platform == "console":
+                    report["diagnoses"].append(
+                        f"控制台字段 [{field}] 探针目标 `{current_selector}` 命中率为 0，判定控制台前端或服务发生退化。"
+                    )
+                    report["actions_taken"].append(
+                        "控制台为自有代码，已禁用规则库热演化以防止假自愈掩盖退化；现场切片已留存，"
+                        "需修复 web/index.html、app.js、api_handler.py 或探针基线 (rules_evolution.json console 段)。"
+                    )
+                    continue
+
                 diag_msg = f"检测到字段 [{field}] 原选择器 `{current_selector}` 命中率为 0，判定发生前端变迁或类名混淆。"
                 report["diagnoses"].append(diag_msg)
 
@@ -266,15 +358,27 @@ class SelfHealingEngine:
                     reason = f"降级推导新选择器，替代失效规则 `{current_selector}`"
 
                 if healed_selector:
-                    field_target = "invoice_btn_selectors" if "invoice" in field else "order_card_selectors"
-                    
-                    new_version = self.rule_manager.update_rule_with_evolution(
-                        platform=platform,
-                        updated_field=field_target,
-                        new_selector_or_pattern=healed_selector,
-                        reason=reason
-                    )
-                    
+                    # 字段与规则库目标的精准映射 (严禁把订单号正则误写入卡片容器选择器链)
+                    if "invoice" in field:
+                        field_target = "invoice_btn_selectors"
+                    elif "order_id" in field:
+                        field_target = "order_id_patterns"
+                    else:
+                        field_target = "order_card_selectors"
+
+                    try:
+                        new_version = self.rule_manager.update_rule_with_evolution(
+                            platform=platform,
+                            updated_field=field_target,
+                            new_selector_or_pattern=healed_selector,
+                            reason=reason
+                        )
+                    except ValueError as admission_err:
+                        report["actions_taken"].append(
+                            f"字段 [{field}] 推导候选 `{healed_selector}` 未通过规则库准入校验 ({admission_err})，已拒绝入库并保留现场切片"
+                        )
+                        continue
+
                     action_msg = f"字段 [{field}] 经 LLM 求解网关自愈成功：新优先选择器 `{healed_selector}` 已生效，规则库演进至 v{new_version}"
                     report["actions_taken"].append(action_msg)
                     report["is_healed"] = True
@@ -284,6 +388,7 @@ class SelfHealingEngine:
 
         # 若未发现任何零命中选择器
         if not report["diagnoses"]:
+            report["health_status"] = "healthy"
             report["diagnoses"].append("所有受监控的选择器健康度处于基线范围 (healthy)，无需触发规则重构")
 
         return report

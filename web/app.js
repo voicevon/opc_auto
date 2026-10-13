@@ -332,75 +332,60 @@ async function openAuditLog() {
   }
 }
 
-// 11. 定时巡检配置 (完全由后端 SSOT 单一真理源动态数据驱动)
-async function openSchedulerModal() {
-  try {
-    const res = await fetch("/api/config/scheduler");
-    const cfg = await res.json();
-    document.getElementById("sched-enabled").checked = cfg.enabled !== false;
-    const currentHarvestTime = cfg.harvest_trigger_time || cfg.trigger_time || "";
-    document.getElementById("sched-time").value = currentHarvestTime;
+// 10.5 电子税务局进项底账手动导入 (Excel/CSV 过渡方案)
+function openImportModal() {
+  document.getElementById("import-file").value = "";
+  const resultBox = document.getElementById("import-result");
+  resultBox.style.display = "none";
+  document.getElementById("import-modal").classList.add("show");
+}
 
-    // 动态渲染快捷选项 (绝不在前端写死)
-    const presetContainer = document.getElementById("sched-preset-container");
-    if (presetContainer && cfg.preset_options) {
-      presetContainer.innerHTML = "";
-      cfg.preset_options.forEach(opt => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        const isCurrent = (opt.time === currentHarvestTime);
-        btn.className = isCurrent ? "btn btn-primary" : "btn btn-secondary";
-        btn.style.flex = "1";
-        btn.style.padding = "6px";
-        btn.innerText = opt.label;
-        btn.onclick = () => {
-          document.getElementById("sched-time").value = opt.time;
-          Array.from(presetContainer.children).forEach(b => b.className = "btn btn-secondary");
-          btn.className = "btn btn-primary";
-        };
-        presetContainer.appendChild(btn);
-      });
-    }
+function closeImportModal() {
+  document.getElementById("import-modal").classList.remove("show");
+}
 
-    document.getElementById("sched-next-run-text").innerHTML = 
-      `<div>🌙 业务采集触发：<b>${cfg.next_run_full || (currentHarvestTime + ' (每日)')}</b></div>` +
-      `<div style="margin-top:4px; opacity:0.85;">🤖 AI自愈复盘时钟：<b>每日 ${cfg.heal_trigger_time || '05:00'}</b> (分析自己)</div>`;
-  } catch (e) {
-    console.error("加载真理源定时配置失败:", e);
+async function handleInvoiceImport() {
+  const fileInput = document.getElementById("import-file");
+  const resultBox = document.getElementById("import-result");
+  const submitBtn = document.getElementById("import-submit-btn");
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    alert("请先选择电子税务局导出的底账文件 (xlsx / CSV)");
+    return;
   }
-  document.getElementById("scheduler-modal").classList.add("show");
-}
-
-function closeSchedulerModal() {
-  document.getElementById("scheduler-modal").classList.remove("show");
-}
-
-async function saveSchedulerConfig(e) {
-  e.preventDefault();
-  const enabled = document.getElementById("sched-enabled").checked;
-  const trigger_time = document.getElementById("sched-time").value;
-
+  submitBtn.disabled = true;
+  submitBtn.innerText = "解析中...";
   try {
-    const res = await fetch("/api/config/scheduler", {
+    const contentBase64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const res = await fetch("/api/invoices/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: enabled, trigger_time: trigger_time })
+      body: JSON.stringify({ filename: file.name, content_base64: contentBase64 })
     });
     const result = await res.json();
-    alert(`【配置生效】${result.message}！\n系统将在后台常驻守护，到点自动执行。`);
-    closeSchedulerModal();
-    // 更新侧边栏状态文本
-    document.getElementById("sidebar-db-status").innerText = `每日 ${trigger_time} 自动执行对账`;
-  } catch (err) {
-    alert("保存失败: " + err.message);
+    resultBox.style.display = "block";
+    resultBox.style.color = result.success ? "#4ade80" : "#f87171";
+    resultBox.innerText = result.message || (result.error || "导入失败");
+    if (result.success) {
+      loadOrdersTable();
+      loadStats();
+    }
+  } catch (e) {
+    resultBox.style.display = "block";
+    resultBox.style.color = "#f87171";
+    resultBox.innerText = "导入异常: " + e.message;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerText = "解析并导入底账";
   }
 }
 
 function switchNav(module) {
-  if (module === "scheduler") {
-    openSchedulerModal();
-    return;
-  }
   const titles = {
     overview: "企业运营中台综合看板",
     finance: "进项发票智能跟踪与核对台账",
