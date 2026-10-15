@@ -171,6 +171,12 @@ def handle_api_request(method, path, body_bytes):
         result = import_invoice_file(filename, content_b64)
         return (200 if result.get("success") else 400), result
 
+    # 5.6 电子税务局进项发票手动同步 (首跑登录/调试用；cron 触发走 cron_daily 周一/周三门控)
+    if route == "/api/etax/sync" and method == "POST":
+        from .etax_sync_service import run_etax_sync
+        res = run_etax_sync(trigger_type="manual")
+        return (200 if res.get("status") in ("success", "skipped") else 502), res
+
     # 8. 真实触发订单开票申请状态变更
     if route == "/api/orders/apply-invoice" and method == "POST":
         order_no = body.get("order_no")

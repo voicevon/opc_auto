@@ -36,6 +36,7 @@ class RuleEvolutionManager:
         "last_evolved_at": "2026-10-10T00:00:00",
         "platforms": {
             "taobao": {
+                "start_url": "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm",
                 "order_card_selectors": [
                     "div[data-id]",
                     ".js-order-item",
@@ -105,6 +106,27 @@ class RuleEvolutionManager:
                     "/api/traces?limit=1"
                 ],
                 "cdp_tab_url_keyword": "localhost:8088"
+            },
+            "tax": {
+                "web_origin": "https://etax.shandong.chinatax.gov.cn:8443/loginb/",
+                "query_page_url": "https://dppt.shandong.chinatax.gov.cn:8443/invoice-query/invoice-query",
+                "cdp_tab_url_keyword": "chinatax",
+                "login_identity_storage_keys": ["navUserinfo", "userInfo"],
+                "login_fail_keywords": ["请先登录", "统一身份认证", "短信验证码", "扫码登录"],
+                "account_entry_text": "税务数字账户",
+                "query_menu_path_texts": ["发票业务", "发票查询统计", "全量发票查询"],
+                "search_btn_text": "查询",
+                "invoice_source_text": "取得发票",
+                "list_row_selectors": [
+                    "table tbody tr"
+                ],
+                "next_page_selectors": [
+                    ".t-pagination__btn-next",
+                    "button.btn-next",
+                    "[title='下一页']"
+                ],
+                "download_keywords": ["下载"],
+                "download_format_priority": ["PDF", "OFD"]
             }
         },
         "evolution_history": []

@@ -1,10 +1,22 @@
 """
 OPC Auto 每日定时任务统一编排入口 (Trae 外部自动化唯一触发点)
 由 Trae 定时自动化每日凌晨调用: python -m src.cron_daily
-执行链: 业务采集与对账巡检 -> 控制台健康探针 -> AI 自愈复盘 -> Trae 积分签到
+执行链: 业务采集与对账巡检 -> 税局进项发票同步(周一/周三门控) -> 控制台健康探针 -> AI 自愈复盘 -> Trae 积分签到
 """
 
 from .audit_service import execute_daily_audit
+
+
+def run_etax_sync():
+    """电子税务局进项发票同步 (每周一/周三门控，仅 cron 触发生效门控)，产出 tax Trace 供自愈复盘"""
+    try:
+        from .etax_sync_service import run_etax_sync as _sync
+        result = _sync(trigger_type="cron")
+        print(f"[CronDaily] 税局发票同步：{result.get('message')}")
+        if result.get("requires_human_login"):
+            print(f"   -> ⚠️ 已产出《决策简报》[ID: {result.get('decision_brief_id')}]，请在宿主 Chrome 人工登录电子税务局后手动重试！")
+    except Exception as etax_err:
+        print(f"[CronDaily] 税局发票同步异常: {etax_err}")
 
 
 def run_console_probe():
@@ -69,7 +81,9 @@ def run_score_claim():
 def main():
     print(f"\n[CronDaily] 触发每日定时任务：开始执行业务采集与巡检...")
     execute_daily_audit(trigger_type="cron")
-    print(f"[CronDaily] 业务采集与巡检执行完毕，执行控制台健康探针...")
+    print(f"[CronDaily] 业务采集与巡检执行完毕，执行税局进项发票同步 (周一/周三窗口)...")
+    run_etax_sync()
+    print(f"[CronDaily] 税局同步执行完毕，执行控制台健康探针...")
     run_console_probe()
     print(f"[CronDaily] 控制台探针执行完毕，立即执行 AI 自愈复盘...")
     run_self_healing()

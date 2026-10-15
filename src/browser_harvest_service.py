@@ -312,6 +312,7 @@ class HumanoidBrowserHarvester:
         self.cdp_http_url = f"http://127.0.0.1:{cdp_port}"
         self.cdp_client: Optional[RawCDPClient] = None
         self.active_tab: Optional[Dict[str, Any]] = None
+        self.opened_tab_id: Optional[str] = None  # 本实例经 open_new_tab 打开的 tab (唯一允许自动关闭的 tab)
 
     def is_browser_ready(self) -> bool:
         """检测宿主浏览器的调试端口是否处于存活监听状态"""
@@ -333,7 +334,8 @@ class HumanoidBrowserHarvester:
 
     def attach_to_page(self, url_keyword: str = "", trace_logger: Optional[AgentTraceLogger] = None) -> bool:
         """
-        挂接至匹配指定 URL 关键词的标签页，若不存在则挂接首个活跃页。
+        严格挂接至 URL 匹配指定关键词的标签页；不存在则返回 False。
+        严禁兜底挂接任意活跃页 (曾在 chrome://newtab / 税局页上触发假采集与假自愈)。
         """
         tabs = self.list_tabs()
         if not tabs:
@@ -347,15 +349,15 @@ class HumanoidBrowserHarvester:
             return False
 
         target_tab = None
-        for t in tabs:
-            if t.get("type") == "page":
-                if url_keyword and url_keyword.lower() in t.get("url", "").lower():
+        if url_keyword:
+            for t in tabs:
+                if (t.get("type") == "page"
+                        and url_keyword.lower() in t.get("url", "").lower()
+                        and "webSocketDebuggerUrl" in t):
                     target_tab = t
                     break
-                if not target_tab:
-                    target_tab = t
 
-        if not target_tab or "webSocketDebuggerUrl" not in target_tab:
+        if not target_tab:
             return False
 
         self.active_tab = target_tab
@@ -798,6 +800,108 @@ class HumanoidBrowserHarvester:
             "failed": len([r for r in click_results if not r.get("clicked")]),
             "applied_order_ids": applied_order_ids
         }
+
+    def open_new_tab(self, url: str, wait_render_s: float = 2.5, trace_logger: Optional[AgentTraceLogger] = None) -> bool:
+        """
+        在宿主浏览器中新建标签页并挂接 CDP 客户端 (探完即关模式，不干扰既有活跃页)。
+        """
+        try:
+            req = urllib.request.Request(
+                f"{self.cdp_http_url}/json/new?{url}",
+                method="PUT", headers={"User-Agent": "OPC-Auto-Agent"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                tab = json.loads(resp.read().decode("utf-8"))
+        except Exception as tab_err:
+            if trace_logger:
+                trace_logger.record_failure_context(
+                    failed_step="open_new_tab",
+                    error_msg=f"新建标签页失败: {tab_err}",
+                    suspected_cause="宿主 Chrome 离线或 CDP HTTP 端口异常",
+                    failed_url=url
+                )
+            return False
+
+        if not tab or not tab.get("webSocketDebuggerUrl"):
+            return False
+
+        self.active_tab = tab
+        self.opened_tab_id = tab.get("id")
+        time.sleep(wait_render_s)  # 等待首屏渲染
+        self.cdp_client = RawCDPClient(tab["webSocketDebuggerUrl"])
+
+        if trace_logger:
+            trace_logger.log_step(
+                step_name="open_new_tab",
+                action="OPEN_CDP_TAB",
+                details={"url": url, "tab_id": tab.get("id")}
+            )
+        return True
+
+    def reattach_to_tab(self, url_keyword: str) -> bool:
+        """
+        切换挂接至匹配 URL 关键词的其他标签页 (portal 点击后业务页可能在新 tab 打开)。
+        注意: 业务 tab 可能是先前会话遗留的，绝不登记进 opened_tab_id，避免被自动清理关闭。
+        """
+        for t in self.list_tabs():
+            if (t.get("type") == "page" and url_keyword.lower() in t.get("url", "").lower()
+                    and t.get("webSocketDebuggerUrl")):
+                if self.cdp_client:
+                    self.cdp_client.close()
+                self.cdp_client = RawCDPClient(t["webSocketDebuggerUrl"])
+                self.active_tab = t
+                return True
+        return False
+
+    def close_opened_tab(self, tab_id: Optional[str] = None):
+        """关闭指定 tab；缺省关闭本实例自己打开的 tab (绝不误关 reattach 的外部业务 tab)"""
+        tid = tab_id or self.opened_tab_id
+        if tid:
+            try:
+                urllib.request.urlopen(f"{self.cdp_http_url}/json/close/{tid}", timeout=4).read()
+            except Exception:
+                pass
+            finally:
+                if self.active_tab and self.active_tab.get("id") == tid:
+                    self.active_tab = None
+                if tid == self.opened_tab_id:
+                    self.opened_tab_id = None
+
+    def wait_download_complete(self, download_dir: str, timeout_s: float = 90.0, poll_interval_s: float = 1.5) -> List[str]:
+        """
+        轮询下载目录判定文件下载完成 (RawCDPClient 丢弃事件帧，无法接收 Page.downloadProgress)：
+        目录中无 .crdownload/.tmp 半成品且文件总大小连续两次采样稳定即视为完成。
+        返回本次新增的完整文件路径列表 (相对调用前快照)。
+        """
+        os.makedirs(download_dir, exist_ok=True)
+
+        def _snapshot():
+            snap = {}
+            for name in os.listdir(download_dir):
+                fp = os.path.join(download_dir, name)
+                if os.path.isfile(fp):
+                    snap[name] = os.path.getsize(fp)
+            return snap
+
+        partial_exts = (".crdownload", ".tmp", ".download")
+        before = set(_snapshot().keys())
+        deadline = time.time() + timeout_s
+        last_size, stable_rounds = -1, 0
+        while time.time() < deadline:
+            time.sleep(poll_interval_s)
+            snap = _snapshot()
+            has_partial = any(n.endswith(partial_exts) for n in snap)
+            total = sum(snap.values())
+            if not has_partial and total == last_size:
+                stable_rounds += 1
+                if stable_rounds >= 2:
+                    break
+            else:
+                stable_rounds = 0
+            last_size = total
+
+        after = _snapshot()
+        return [os.path.join(download_dir, n) for n in after
+                if n not in before and not n.endswith(partial_exts)]
 
     def close(self):
         """释放 CDP 客户端连接"""

@@ -125,6 +125,15 @@ def init_db():
     )
     """)
 
+    # 7. 平台同步水位线表 (单一真理源：各采集平台最近一次成功同步日期)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sync_watermarks (
+        platform TEXT PRIMARY KEY,            -- etax(电子税务局) / taobao 等
+        last_sync_date TEXT NOT NULL,         -- 最近一次成功同步的业务日期 (YYYY-MM-DD)
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()
     conn.close()
 

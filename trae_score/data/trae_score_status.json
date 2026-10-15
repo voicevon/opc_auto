@@ -29,6 +29,16 @@
       "checked_at": "2026-10-13T09:44:54.777576",
       "trigger_type": "cron",
       "today": "2026-10-13"
+    },
+    {
+      "ok": true,
+      "claimed": false,
+      "credits": 200,
+      "account": "Trae CN",
+      "message": "今日已签到",
+      "checked_at": "2026-10-14T02:03:46.475734",
+      "trigger_type": "manual",
+      "today": "2026-10-14"
     }
   ],
   "last_result": {
@@ -37,8 +47,8 @@
     "credits": 200,
     "account": "Trae CN",
     "message": "今日已签到",
-    "checked_at": "2026-10-13T09:44:54.777576",
-    "trigger_type": "cron",
-    "today": "2026-10-13"
+    "checked_at": "2026-10-14T02:03:46.475734",
+    "trigger_type": "manual",
+    "today": "2026-10-14"
   }
 }

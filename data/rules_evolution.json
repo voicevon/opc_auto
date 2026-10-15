@@ -3,6 +3,7 @@
   "last_evolved_at": "2026-10-13T10:05:00.000000",
   "platforms": {
     "taobao": {
+      "start_url": "https://buyertrade.taobao.com/trade/itemlist/list_bought_items.htm",
       "order_card_selectors": [
         "[id^='shopOrderContainer_']",
         "div[class*='shopOrderContainer']"
