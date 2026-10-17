@@ -2,7 +2,7 @@
 OPC Auto 真实巡检与总结报告服务 (Audit & Daily Report Generator)
 """
 
-import re
+import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from .database import get_db_connection
@@ -148,7 +148,8 @@ def execute_daily_audit(trigger_type="manual"):
     else:
         try:
             # 仅挂接淘宝订单页专属标签页，严禁兜底挂接任意活跃页 (避免在 chrome://newtab 等非目标页误采集)
-            attached = harvester.attach_to_page(url_keyword="taobao", trace_logger=trace_logger)
+            # 精确挂接订单列表页 (list_bought_items URL 特征)；"taobao" 过宽会误挂订单详情页等非列表页
+            attached = harvester.attach_to_page(url_keyword="list_bought_items", trace_logger=trace_logger)
 
             if not attached:
                 # 自愈式开页：按规则库 start_url 新开淘宝订单页 tab (探完即关)，再重试严格挂接
@@ -160,51 +161,34 @@ def execute_daily_audit(trigger_type="manual"):
                         action="AUTO_OPEN_TAB",
                         details={"url": start_url, "reason": "未找到淘宝订单页标签，按规则库 start_url 自动新开"}
                     )
-                    attached = harvester.reattach_to_tab("taobao")
+                    attached = harvester.reattach_to_tab("list_bought_items")
 
             if attached:
                 harvest_status_summary["cdp_connected"] = True
-                # 拟人化平滑滚动页面，触发懒加载并记录过程时序
-                harvester.humanoid_scroll_and_wait(min_wait=0.8, max_wait=1.8, trace_logger=trace_logger)
-                extracted_items = harvester.harvest_orders(platform="taobao", trace_logger=trace_logger)
-                trace_logger.finish(extracted_items=extracted_items, success=(len(extracted_items) > 0))
+                # 2026-10-17 用户拍板：订单数据不再爬 DOM，主通道改走淘宝官方「导出订单」按钮
+                # (权威实付金额/数量/运费/下单时间，天然全量且规避选择器漂移与字段误抓)
+                export_result = harvester.export_orders_via_official_button(trace_logger=trace_logger)
 
-                harvest_status_summary["orders_extracted"] = len(extracted_items)
-                harvest_status_summary["message"] = f"拟人化采集成功，获取 {len(extracted_items)} 笔电商采购订单"
+                if not export_result.get("success"):
+                    trace_logger.finish(extracted_items=[], success=False)
+                    harvest_status_summary["orders_extracted"] = 0
+                    harvest_status_summary["message"] = f"官方导出通道失败: {export_result.get('error')}"
+                else:
+                    import base64 as _b64
+                    from .order_export_import_service import import_order_export_file
+                    file_path = export_result["file_path"]
+                    file_b64 = _b64.b64encode(open(file_path, "rb").read()).decode()
+                    import_result = import_order_export_file(os.path.basename(file_path), file_b64)
+                    imported_n = import_result.get("imported", 0)
+                    trace_logger.finish(extracted_items=[{"imported": imported_n, "file": os.path.basename(file_path)}],
+                                        success=(import_result.get("success") is True))
+                    harvest_status_summary["orders_extracted"] = imported_n
+                    harvest_status_summary["message"] = (
+                        f"官方导出通道采集成功：{import_result.get('message', '')} (文件 {os.path.basename(file_path)})"
+                        if import_result.get("success") else f"导出文件入库失败: {import_result.get('message')}"
+                    )
 
-                # 将真实采集订单清洗落入 procurement_orders
-                if extracted_items:
-                    conn_orders = get_db_connection()
-                    cur_orders = conn_orders.cursor()
-                    for it in extracted_items:
-                        order_no = str(it.get("order_id", "")).strip()
-                        if not order_no:
-                            continue
-                        pay_amt = float(it.get("pay_amount", 0.0))
-                        seller = it.get("store_name", "") or "淘宝精选店铺"
-                        raw_status = it.get("invoice_status", "")
-                        inv_status = "invoiced" if "已开票" in raw_status else ("applying" if "已申请" in raw_status else "unapplied")
-                        raw_snippet = it.get("raw_snippet", "") or ""
-                        item_desc = raw_snippet[:120] or f"淘宝采购订单 {order_no}"
-                        # 真实下单日期：raw_snippet 首行 YYYY-MM-DD (采集时刻冒充下单时间会导致对账时间窗失真)
-                        date_match = re.match(r"(\d{4}-\d{2}-\d{2})", raw_snippet.strip())
-                        order_time = date_match.group(1) if date_match else ""
-
-                        cur_orders.execute("""
-                        INSERT INTO procurement_orders (
-                            channel, channel_name, order_no, order_time, item_desc, amount, seller_name, invoice_status, notes
-                        ) VALUES ('taobao', '淘宝企业购', ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(order_no) DO UPDATE SET
-                            order_time=excluded.order_time,
-                            amount=excluded.amount,
-                            seller_name=excluded.seller_name,
-                            invoice_status=excluded.invoice_status,
-                            notes=excluded.notes
-                        """, (order_no, order_time, item_desc, pay_amt, seller, inv_status, f"CDP采集状态: {raw_status}"))
-                    conn_orders.commit()
-                    conn_orders.close()
-
-                    # 2.1 全自动点击申请开票 (已确认决策：无需人工确认)
+                    # 全自动点击申请开票 (已确认决策：无需人工确认；基于页面卡片操作，与导出数据通道独立)
                     cursor_profile = get_db_connection()
                     prof_row = cursor_profile.execute(
                         "SELECT * FROM company_billing_profile ORDER BY id DESC LIMIT 1"

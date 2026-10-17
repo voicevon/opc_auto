@@ -205,6 +205,16 @@ def handle_api_request(method, path, body_bytes):
         result = import_invoice_file(filename, content_b64)
         return (200 if result.get("success") else 400), result
 
+    # 5.55 淘宝「导出订单」xlsx 导入 (订单实付金额权威数据源)
+    if route == "/api/orders/import-export" and method == "POST":
+        from .order_export_import_service import import_order_export_file
+        filename = str(body.get("filename", "")).strip()
+        content_b64 = str(body.get("content_base64", "")).strip()
+        if not filename or not content_b64:
+            return 400, {"error": "缺少 filename 或 content_base64 参数"}
+        result = import_order_export_file(filename, content_b64)
+        return (200 if result.get("success") else 400), result
+
     # 5.6 电子税务局进项发票手动同步 (首跑登录/调试用；cron 触发走 cron_daily 周一/周三门控)
     if route == "/api/etax/sync" and method == "POST":
         from .etax_sync_service import run_etax_sync

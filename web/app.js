@@ -468,6 +468,58 @@ async function handleInvoiceImport() {
   }
 }
 
+function openOrderImportModal() {
+  document.getElementById("order-import-file").value = "";
+  const resultBox = document.getElementById("order-import-result");
+  resultBox.style.display = "none";
+  document.getElementById("order-import-modal").classList.add("show");
+}
+
+function closeOrderImportModal() {
+  document.getElementById("order-import-modal").classList.remove("show");
+}
+
+async function handleOrderExportImport() {
+  const fileInput = document.getElementById("order-import-file");
+  const resultBox = document.getElementById("order-import-result");
+  const submitBtn = document.getElementById("order-import-submit-btn");
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    alert("请先选择淘宝「导出订单」下载的 订单数据.xlsx");
+    return;
+  }
+  submitBtn.disabled = true;
+  submitBtn.innerText = "解析中...";
+  try {
+    const contentBase64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const res = await fetch("/api/orders/import-export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, content_base64: contentBase64 })
+    });
+    const result = await res.json();
+    resultBox.style.display = "block";
+    resultBox.style.color = result.success ? "#4ade80" : "#f87171";
+    resultBox.innerText = result.message || (result.error || "导入失败");
+    if (result.success) {
+      loadOrdersTable();
+      loadStats();
+    }
+  } catch (e) {
+    resultBox.style.display = "block";
+    resultBox.style.color = "#f87171";
+    resultBox.innerText = "导入异常: " + e.message;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerText = "解析并导入订单";
+  }
+}
+
 function switchNav(module) {
   const titles = {
     overview: "企业运营中台综合看板",

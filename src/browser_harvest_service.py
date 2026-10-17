@@ -16,6 +16,7 @@ import base64
 import random
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
 # 集中隔离的诊断留痕目录 (遵循 AGENTS.md 准则)
@@ -470,9 +471,16 @@ class HumanoidBrowserHarvester:
                         orderId = card.id.substring("shopOrderContainer_".length);
                     }}
 
-                    // 实付金额提取
-                    const amountMatch = textContent.match(/￥?\\s*([0-9]+\\.[0-9]{{2}})/);
-                    const payAmount = amountMatch ? parseFloat(amountMatch[1]) : 0.0;
+                    // 实付金额提取：锚定"实付"标签金额（卡片内首个金额常是商品单价，直接取首个会错存单价）
+                    let payAmount = 0.0;
+                    const payMatch = textContent.match(/实付[款额：:\\s]*￥?\\s*([0-9]+\\.[0-9]{{2}})/);
+                    if (payMatch) {{
+                        payAmount = parseFloat(payMatch[1]);
+                    }} else {{
+                        // 回落：页面无"实付"文案时取卡片内首个金额
+                        const amountMatch = textContent.match(/￥?\\s*([0-9]+\\.[0-9]{{2}})/);
+                        payAmount = amountMatch ? parseFloat(amountMatch[1]) : 0.0;
+                    }}
 
                     // 店铺/商户提取 (消费规则库 store_name_selectors, 回落通用选择器)
                     let storeName = "";
@@ -800,6 +808,227 @@ class HumanoidBrowserHarvester:
             "failed": len([r for r in click_results if not r.get("clicked")]),
             "applied_order_ids": applied_order_ids
         }
+
+    def export_orders_via_official_button(self, trace_logger: Optional[AgentTraceLogger] = None,
+                                          max_pages: int = 10, wait_timeout_s: int = 90) -> Dict[str, Any]:
+        """
+        官方「导出订单」通道采集引擎 (2026-10-17 用户拍板：订单数据不再爬 DOM，改走淘宝官方导出)。
+        流程：设定下载目录 → 真实点击「导出订单」→ 弹窗页数拉满 → 点击「下载订单」→ 等待 xlsx 落盘。
+        返回 {success, file_path, error}
+        """
+        if not self.cdp_client:
+            raise RuntimeError("CDP 客户端尚未连接！请先调用 attach_to_page()")
+
+        export_dir = Path(__file__).resolve().parent.parent / "data" / "order_exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        download_path = str(export_dir)
+        result: Dict[str, Any] = {"success": False, "file_path": None, "error": None}
+
+        def dialog_open() -> bool:
+            """导出弹窗已渲染的权威信号 (弹窗专属文案，主页面不存在)"""
+            return bool(self.cdp_client.evaluate("""
+            (() => {
+                const t = document.body.innerText || "";
+                return (t.includes("下载订单") || t.includes("最多可导出")) ? "1" : "";
+            })()
+            """))
+
+        def await_dialog(timeout_s: float = 8.0) -> bool:
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                if dialog_open():
+                    return True
+                time.sleep(0.8)
+            return False
+
+        def click_and_await_dialog(text: str, step: str) -> bool:
+            """点击导出入口并确认弹窗出现：合成 click 优先 (导出弹窗无 window.open 拦截风险)，
+            失败回退 Input.dispatchMouseEvent 真实点击；每次点击后轮询弹窗信号。"""
+            pos_raw = self.cdp_client.evaluate(f"""
+            (() => {{
+                const target = {json.dumps(text)};
+                const els = Array.from(document.querySelectorAll("a, button, span, div, li"))
+                    .filter(el => el.offsetParent !== null);
+                const label = (el) => (el.innerText || "").trim();
+                // 按文本长度升序取最小命中 (精确优先；含角标如"导出订单新"也能命中最近元素，防止匹配到巨型容器)
+                const hits = els.filter(el => label(el) === target || label(el).includes(target))
+                    .sort((a, b) => label(a).length - label(b).length);
+                let hit = hits[0];
+                if (!hit) return null;
+                const leaves = Array.from(hit.querySelectorAll("*"))
+                    .filter(el => label(el) === label(hit) && label(el));
+                if (leaves.length > 0) hit = leaves[leaves.length - 1];
+                hit.scrollIntoView({{block: "center"}});
+                const r = hit.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) return null;
+                // elementFromPoint 验证坐标确实落在目标元素上 (防视口缩放/iframe 坐标错位)
+                const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+                const at = document.elementFromPoint(x, y);
+                const inTarget = at ? (hit.contains(at) || at.contains(hit)) : false;
+                if (!inTarget) {{
+                    try {{ hit.click(); }} catch (e) {{}}
+                    return JSON.stringify({{synthetic: true}});
+                }}
+                try {{ hit.click(); }} catch (e) {{}}
+                return JSON.stringify({{x, y, synthetic: true}});
+            }})()
+            """)
+            if not pos_raw:
+                if trace_logger:
+                    trace_logger.log_step(step, "TEXT_NOT_FOUND", {"text": text})
+                return False
+            info = json.loads(pos_raw)
+            if await_dialog():
+                if trace_logger:
+                    trace_logger.log_step(step, "CLICK_AND_DIALOG", {"text": text, "mode": "synthetic", **info})
+                return True
+            # 合成 click 被页面事件模型拦截 (isTrusted 校验) → 真实鼠标完整序列: 移入悬停 → 按下 → 释放
+            if info.get("x") is not None:
+                self.cdp_client.call("Input.dispatchMouseEvent", {
+                    "type": "mouseMoved", "x": info["x"], "y": info["y"]})
+                time.sleep(0.3)
+                self.cdp_client.call("Input.dispatchMouseEvent", {
+                    "type": "mousePressed", "x": info["x"], "y": info["y"], "button": "left", "clickCount": 1})
+                self.cdp_client.call("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "x": info["x"], "y": info["y"], "button": "left", "clickCount": 1})
+                if await_dialog():
+                    if trace_logger:
+                        trace_logger.log_step(step, "CLICK_AND_DIALOG", {"text": text, "mode": "real_mouse", **info})
+                    return True
+            if trace_logger:
+                trace_logger.log_step(step, "CLICK_NO_DIALOG", {"text": text, "info": info})
+            return False
+
+        try:
+            # 1. 下载行为接管：导出文件直落项目 data/order_exports (双 API 兼容不同 Chrome 版本)
+            download_configured = False
+            for method, domain_kw in (("Browser.setDownloadBehavior", "downloadPath"), ("Page.setDownloadBehavior", "downloadPath")):
+                try:
+                    self.cdp_client.call(method, {"behavior": "allow", domain_kw: download_path, "eventsEnabled": True})
+                    download_configured = True
+                    break
+                except Exception:
+                    continue
+            if trace_logger:
+                trace_logger.log_step("setup_download_dir", "CONFIG" if download_configured else "CONFIG_FALLBACK",
+                                      {"download_path": download_path,
+                                       "note": "" if download_configured else "CDP 下载接管失败，文件将落默认 Downloads 目录"})
+
+            # 2. 真实点击「导出订单」并确认弹窗出现 (双模式：合成 click 优先 + 真实鼠标回退)
+            time.sleep(random.uniform(0.8, 1.5))
+            if not click_and_await_dialog("导出订单", "click_export_entry"):
+                result["error"] = "点击「导出订单」后导出弹窗未出现"
+                if trace_logger:
+                    trace_logger.record_failure_context(
+                        failed_step="click_export_entry", error_msg=result["error"],
+                        suspected_cause="导出入口按钮文本变化、弹窗渲染延迟或页面结构漂移")
+                return result
+
+            # 3. 弹窗内页数拉满 (提示文案"最多可导出N页"动态解析上限)
+            time.sleep(random.uniform(1.2, 2.0))
+            max_from_ui = self.cdp_client.evaluate("""
+            (() => {
+                const m = (document.body.innerText || "").match(/最多可导出\\s*(\\d+)\\s*页/);
+                return m ? parseInt(m[1]) : 0;
+            })()
+            """)
+            target_pages = max_pages if not isinstance(max_from_ui, int) or max_from_ui <= 0 else min(max_pages, max_from_ui)
+            pageset_raw = self.cdp_client.evaluate(f"""
+            (() => {{
+                const inputs = Array.from(document.querySelectorAll("input"))
+                    .filter(el => el.offsetParent !== null && (el.type === "number" || el.type === "text"));
+                const numInput = inputs.find(el => el.value !== "" && !isNaN(Number(el.value)));
+                if (!numInput) return "NO_INPUT";
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                setter.call(numInput, String({target_pages}));
+                numInput.dispatchEvent(new Event("input", {{bubbles: true}}));
+                numInput.dispatchEvent(new Event("change", {{bubbles: true}}));
+                return "SET_" + numInput.value;
+            }})()
+            """)
+            if trace_logger:
+                trace_logger.log_step("set_export_pages", "SET_PAGES",
+                                      {"target_pages": target_pages, "result": str(pageset_raw), "ui_max": max_from_ui})
+
+            # 4. 点击「下载订单」(点击后弹窗关闭属预期，确认信号=文件落盘而非弹窗存在)
+            time.sleep(random.uniform(0.5, 1.0))
+            confirm_pos_raw = self.cdp_client.evaluate("""
+            (() => {
+                const target = "下载订单";
+                const els = Array.from(document.querySelectorAll("a, button, span, div"))
+                    .filter(el => el.offsetParent !== null);
+                const label = (el) => (el.innerText || "").trim();
+                const hits = els.filter(el => label(el) === target || label(el).includes(target))
+                    .sort((a, b) => label(a).length - label(b).length);
+                let hit = hits[0];
+                if (!hit) return null;
+                const leaves = Array.from(hit.querySelectorAll("*"))
+                    .filter(el => label(el) === label(hit) && label(el));
+                if (leaves.length > 0) hit = leaves[leaves.length - 1];
+                const r = hit.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) return null;
+                try { hit.click(); } catch (e) {}
+                return JSON.stringify({x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)});
+            })()
+            """)
+            if not confirm_pos_raw:
+                result["error"] = "导出弹窗内未找到「下载订单」按钮"
+                if trace_logger:
+                    trace_logger.record_failure_context(
+                        failed_step="click_export_confirm", error_msg=result["error"],
+                        suspected_cause="导出弹窗按钮文本变化")
+                return result
+            confirm_pos = json.loads(confirm_pos_raw)
+            if trace_logger:
+                trace_logger.log_step("click_export_confirm", "SYNTHETIC_CLICK", {"text": "下载订单", **confirm_pos})
+
+            before = {p.name for p in export_dir.glob("*.xlsx")}
+
+            def poll_new_file(timeout_s: float):
+                deadline = time.time() + timeout_s
+                found = None
+                while time.time() < deadline:
+                    time.sleep(1.5)
+                    candidates = [p for p in export_dir.glob("*.xlsx") if p.name not in before]
+                    if candidates:
+                        newest = max(candidates, key=lambda p: p.stat().st_mtime)
+                        if found and found.name == newest.name and found.stat().st_size == newest.stat().st_size and newest.stat().st_size > 1024:
+                            return newest  # 大小连续两次稳定 → 下载完成
+                        found = newest
+                return None
+
+            new_file = poll_new_file(wait_timeout_s)
+            if not new_file and confirm_pos.get("x") is not None:
+                # 合成点击未触发下载 → 回退真实鼠标点击 (淘宝导出可能校验 isTrusted)
+                self.cdp_client.call("Input.dispatchMouseEvent", {
+                    "type": "mousePressed", "x": confirm_pos["x"], "y": confirm_pos["y"], "button": "left", "clickCount": 1})
+                self.cdp_client.call("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "x": confirm_pos["x"], "y": confirm_pos["y"], "button": "left", "clickCount": 1})
+                if trace_logger:
+                    trace_logger.log_step("click_export_confirm", "REAL_MOUSE_FALLBACK", confirm_pos)
+                new_file = poll_new_file(40)
+            if not new_file or new_file.stat().st_size <= 1024:
+                result["error"] = f"等待 {wait_timeout_s}s 未捕获到导出文件落盘"
+                if trace_logger:
+                    trace_logger.record_failure_context(
+                        failed_step="wait_export_file", error_msg=result["error"],
+                        suspected_cause="下载被浏览器策略拦截或导出接口报错 (需人工查看页面弹窗)")
+                return result
+
+            result["success"] = True
+            result["file_path"] = str(new_file)
+            if trace_logger:
+                trace_logger.log_step("export_file_ready", "FILE_READY",
+                                      {"file": new_file.name, "size_bytes": new_file.stat().st_size})
+            return result
+
+        except Exception as e:
+            result["error"] = str(e)
+            if trace_logger:
+                trace_logger.record_failure_context(
+                    failed_step="export_orders_via_official_button", error_msg=str(e),
+                    suspected_cause="官方导出通道执行异常")
+            return result
 
     def open_new_tab(self, url: str, wait_render_s: float = 2.5, trace_logger: Optional[AgentTraceLogger] = None) -> bool:
         """

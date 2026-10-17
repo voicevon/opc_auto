@@ -15,6 +15,9 @@ data/chrome_cdp_profile/
 # 税局同步下载的进项发票原始文件 (PDF/OFD，含敏感财税数据，禁止入库)
 data/tax_invoices/
 
+# 淘宝官方导出的订单数据 xlsx (业务敏感数据，禁止入库)
+data/order_exports/
+
 # 联系人台账 (含 909 人手机号等个人隐私数据，禁止入库)
 data/contacts.json
 

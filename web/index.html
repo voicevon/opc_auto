@@ -96,48 +96,31 @@
     <!-- 工作台内容主体 -->
     <div class="content-container">
 
-      <!-- 顶部真实巡检提醒条 -->
-      <div class="banner-alert">
-        <div class="banner-content">
-          <div class="banner-icon">🛡️</div>
-          <div>
-            <div class="banner-title" id="banner-title">真实数据对账引擎运行中 (0 虚拟/仿真数据)</div>
-            <div class="banner-subtitle" id="banner-subtitle">
-              上次巡检时间：获取中... | 底层驱动：真实 SQLite 数据库
-            </div>
-          </div>
+      <!-- 顶部状态条 1：对账引擎 (标题+副标题同行，降低高度) -->
+      <div class="top-strip">
+        <div class="strip-group">
+          <span class="strip-icon">🛡️</span>
+          <span class="strip-title" id="banner-title">真实数据对账引擎运行中 (0 虚拟/仿真数据)</span>
+          <span class="strip-sub" id="banner-subtitle">上次巡检时间：获取中... | 底层驱动：真实 SQLite 数据库</span>
         </div>
-        <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="openAuditLog()">
-          查看真实日志
-        </button>
+        <div class="strip-actions">
+          <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openAuditLog()">查看真实日志</button>
+        </div>
       </div>
 
-      <!-- 拟人化浏览器采集与过程流水线看板 (实时过程态呈现) -->
-      <div class="pipeline-card" style="background: rgba(18, 24, 38, 0.95); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="width: 44px; height: 44px; border-radius: 10px; background: rgba(59, 130, 246, 0.15); display: flex; align-items: center; justify-content: center; font-size: 22px;">
-            🌐
-          </div>
-          <div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span style="font-weight: 700; color: #fff; font-size: 15px;">宿主浏览器接管流水线</span>
-              <span id="cdp-status-badge" class="channel-badge" style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.4);">
-                ● CDP 9222 调试端口未连接
-              </span>
-            </div>
-            <div id="pipeline-trace-summary" style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">
-              最近采集：正在加载中间过程数据...
-            </div>
-          </div>
+      <!-- 顶部状态条 2：采集流水线 (单行，降低高度) -->
+      <div class="top-strip">
+        <div class="strip-group">
+          <span class="strip-icon">🌐</span>
+          <span class="strip-title">宿主浏览器接管流水线</span>
+          <span id="cdp-status-badge" class="channel-badge" style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.4);">
+            ● CDP 9222 调试端口未连接
+          </span>
+          <span class="strip-sub" id="pipeline-trace-summary">最近采集：正在加载中间过程数据...</span>
         </div>
-
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <button class="btn btn-secondary" style="padding: 7px 14px; font-size: 12px;" onclick="openTraceModal()">
-            <span>🔬</span><span>查看采集中间过程 (Trace)</span>
-          </button>
-          <button class="btn btn-secondary" style="padding: 7px 14px; font-size: 12px; color: #60a5fa;" onclick="openChromeGuideModal()">
-            <span>🚀</span><span>开启浏览器指南</span>
-          </button>
+        <div class="strip-actions">
+          <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openTraceModal()">🔬 Trace</button>
+          <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px; color: #60a5fa;" onclick="openChromeGuideModal()">🚀 浏览器指南</button>
         </div>
       </div>
 
@@ -236,6 +219,7 @@
             <input type="text" id="search-input" placeholder="输入订单号 / 商户全称 / 发票号搜索..." oninput="handleSearch()">
           </div>
 
+          <button class="btn btn-secondary" style="white-space:nowrap; margin-left:8px;" onclick="openOrderImportModal()">🛒 导入淘宝订单导出</button>
           <button class="btn btn-secondary" style="white-space:nowrap; margin-left:8px;" onclick="openImportModal()">📥 导入税局底账</button>
         </div>
 
@@ -282,6 +266,23 @@
         <input type="file" id="import-file" accept=".xlsx,.csv" style="width:100%; padding:10px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color); font-size:13px;">
         <div id="import-result" style="margin-top:12px; font-size:13px; display:none;"></div>
         <button class="btn btn-primary" id="import-submit-btn" style="width:100%; justify-content:center; padding:10px; margin-top:14px;" onclick="handleInvoiceImport()">解析并导入底账</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="order-import-modal">
+    <div class="modal-card" style="max-width: 560px;">
+      <div class="modal-header">
+        <div class="modal-title">🛒 导入淘宝「导出订单」数据 (xlsx)</div>
+        <button class="modal-close" onclick="closeOrderImportModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.2); border-radius: 6px; padding: 10px; font-size: 12px; color: #86efac; margin-bottom: 14px;">
+          淘宝「已买到的宝贝」→【导出订单】→ 页数拉满 → 下载订单数据.xlsx，在此上传。导出文件含权威实付金额/数量/运费，导入后将覆盖修正台账金额并自动重跑对账。可重复导入（按订单号幂等更新）。
+        </div>
+        <input type="file" id="order-import-file" accept=".xlsx" style="width:100%; padding:10px; border-radius:6px; background:#0a0e17; color:#fff; border:1px solid var(--border-color); font-size:13px;">
+        <div id="order-import-result" style="margin-top:12px; font-size:13px; display:none;"></div>
+        <button class="btn btn-primary" id="order-import-submit-btn" style="width:100%; justify-content:center; padding:10px; margin-top:14px;" onclick="handleOrderExportImport()">解析并导入订单</button>
       </div>
     </div>
   </div>
