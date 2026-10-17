@@ -2,6 +2,7 @@
 OPC Auto 真实巡检与总结报告服务 (Audit & Daily Report Generator)
 """
 
+import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from .database import get_db_connection
@@ -25,26 +26,34 @@ def finalize_reconciliation_and_report(header_md: str, tips: Optional[List[str]]
 - **税局进项有效发票**：{stats['total_invoices']} 笔
 - **闭环匹配成功率**：{round(stats['matched']['count'] / stats['total_orders'] * 100, 1) if stats['total_orders'] > 0 else 0.0}%
 
-### 三、 四大业务分类详报
-1. 🟢 **状态④ 核对配对成功 (闭环归档)**：
+### 三、 双侧五态业务分类详报
+**订单侧：**
+1. 🔵 **未申请发票**：
+   - 笔数：{stats['unapplied']['count']} 笔
+   - 总额：￥{stats['unapplied']['amount']:,.2f} 元
+2. 🔴 **未开发票 (已申请但税局底账暂无票，催办)**：
+   - 笔数：{stats['uninvoiced']['count']} 笔
+   - 催办总额：￥{stats['uninvoiced']['amount']:,.2f} 元
+3. 🟢 **真开票 (与税局进项票配对成功，闭环归档)**：
    - 笔数：{stats['matched']['count']} 笔
    - 价税合计总额：￥{stats['matched']['amount']:,.2f} 元
-2. 🟡 **状态② 电商待申请发票 (待办催办)**：
-   - 笔数：{stats['pending']['count']} 笔
-   - 待申请总额：￥{stats['pending']['amount']:,.2f} 元
-3. 🔴 **状态③ 已申请未到票 (超期预警)**：
-   - 笔数：{stats['warning']['count']} 笔
-   - 预警总额：￥{stats['warning']['amount']:,.2f} 元
-4. 🟣 **状态① 非电商/线下渠道票据 (加油/差旅等)**：
+
+**税局票侧：**
+4. 🟣 **待审核票 (新到未配上订单，待人工勾选)**：
+   - 笔数：{stats['pending_review']['count']} 笔
+   - 总额：￥{stats['pending_review']['amount']:,.2f} 元
+5. 🟤 **确认线下 (人工批量勾选审核留痕)**：
    - 笔数：{stats['offline']['count']} 笔
    - 线下受票总额：￥{stats['offline']['amount']:,.2f} 元
 
 ### 四、 处置建议与后续待办
 """
-    if stats['warning']['count'] > 0:
-        md_report += f"- ⚠ 请财务专员优先针对状态③中的 {stats['warning']['count']} 笔超期订单联系商家催开发票。\n"
-    if stats['pending']['count'] > 0:
-        md_report += f"- 📌 针对状态②中的 {stats['pending']['count']} 笔未申请订单，建议使用一键提报开票申请。\n"
+    if stats['uninvoiced']['count'] > 0:
+        md_report += f"- ⚠ 请财务专员优先针对未开发票中的 {stats['uninvoiced']['count']} 笔订单联系商家催开发票。\n"
+    if stats['unapplied']['count'] > 0:
+        md_report += f"- 📌 针对未申请发票中的 {stats['unapplied']['count']} 笔订单，建议使用一键提报开票申请。\n"
+    if stats['pending_review']['count'] > 0:
+        md_report += f"- 🕵 待审核票 {stats['pending_review']['count']} 笔请在控制台勾选审核：配上订单的自动配对，确属线下的批量勾选【确认为线下支出】。\n"
     for tip in (tips or []):
         md_report += f"- {tip}\n"
 
@@ -55,21 +64,24 @@ def finalize_reconciliation_and_report(header_md: str, tips: Optional[List[str]]
     INSERT INTO daily_reports (
         report_date, total_orders, total_invoices,
         matched_count, matched_amount,
-        pending_count, pending_amount,
-        warning_count, warning_amount,
+        unapplied_count, unapplied_amount,
+        uninvoiced_count, uninvoiced_amount,
+        pending_review_count, pending_review_amount,
         offline_count, offline_amount,
         markdown_content
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(report_date) DO UPDATE SET
         total_orders=excluded.total_orders,
         total_invoices=excluded.total_invoices,
         matched_count=excluded.matched_count,
         matched_amount=excluded.matched_amount,
-        pending_count=excluded.pending_count,
-        pending_amount=excluded.pending_amount,
-        warning_count=excluded.warning_count,
-        warning_amount=excluded.warning_amount,
+        unapplied_count=excluded.unapplied_count,
+        unapplied_amount=excluded.unapplied_amount,
+        uninvoiced_count=excluded.uninvoiced_count,
+        uninvoiced_amount=excluded.uninvoiced_amount,
+        pending_review_count=excluded.pending_review_count,
+        pending_review_amount=excluded.pending_review_amount,
         offline_count=excluded.offline_count,
         offline_amount=excluded.offline_amount,
         markdown_content=excluded.markdown_content,
@@ -77,8 +89,9 @@ def finalize_reconciliation_and_report(header_md: str, tips: Optional[List[str]]
     """, (
         today_str, stats['total_orders'], stats['total_invoices'],
         stats['matched']['count'], stats['matched']['amount'],
-        stats['pending']['count'], stats['pending']['amount'],
-        stats['warning']['count'], stats['warning']['amount'],
+        stats['unapplied']['count'], stats['unapplied']['amount'],
+        stats['uninvoiced']['count'], stats['uninvoiced']['amount'],
+        stats['pending_review']['count'], stats['pending_review']['amount'],
         stats['offline']['count'], stats['offline']['amount'],
         md_report
     ))
@@ -171,18 +184,23 @@ def execute_daily_audit(trigger_type="manual"):
                         seller = it.get("store_name", "") or "淘宝精选店铺"
                         raw_status = it.get("invoice_status", "")
                         inv_status = "invoiced" if "已开票" in raw_status else ("applying" if "已申请" in raw_status else "unapplied")
-                        item_desc = it.get("raw_snippet", "")[:120] or f"淘宝采购订单 {order_no}"
+                        raw_snippet = it.get("raw_snippet", "") or ""
+                        item_desc = raw_snippet[:120] or f"淘宝采购订单 {order_no}"
+                        # 真实下单日期：raw_snippet 首行 YYYY-MM-DD (采集时刻冒充下单时间会导致对账时间窗失真)
+                        date_match = re.match(r"(\d{4}-\d{2}-\d{2})", raw_snippet.strip())
+                        order_time = date_match.group(1) if date_match else ""
 
                         cur_orders.execute("""
                         INSERT INTO procurement_orders (
                             channel, channel_name, order_no, order_time, item_desc, amount, seller_name, invoice_status, notes
                         ) VALUES ('taobao', '淘宝企业购', ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(order_no) DO UPDATE SET
+                            order_time=excluded.order_time,
                             amount=excluded.amount,
                             seller_name=excluded.seller_name,
                             invoice_status=excluded.invoice_status,
                             notes=excluded.notes
-                        """, (order_no, now_str, item_desc, pay_amt, seller, inv_status, f"CDP采集状态: {raw_status}"))
+                        """, (order_no, order_time, item_desc, pay_amt, seller, inv_status, f"CDP采集状态: {raw_status}"))
                     conn_orders.commit()
                     conn_orders.close()
 

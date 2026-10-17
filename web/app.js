@@ -66,32 +66,34 @@ async function fetchSystemStatus() {
   }
 }
 
-// 2. 加载四分类真实指标
+// 2. 加载双侧五态真实指标
 async function loadStats() {
   try {
     const res = await fetch("/api/stats");
     const stats = await res.json();
 
-    // 更新四大卡片
-    document.getElementById("kpi-matched-count").innerText = stats.matched.count;
-    document.getElementById("kpi-matched-amount").innerText = `￥${stats.matched.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+    // 五卡：订单侧三项 + 票侧两项
+    const cards = [
+      ["unapplied", "kpi-unapplied"],
+      ["uninvoiced", "kpi-uninvoiced"],
+      ["matched", "kpi-matched"],
+      ["pending_review", "kpi-pending-review"],
+      ["offline", "kpi-offline"]
+    ];
+    cards.forEach(([key, dom]) => {
+      const s = stats[key] || { count: 0, amount: 0 };
+      document.getElementById(`${dom}-count`).innerText = s.count;
+      document.getElementById(`${dom}-amount`).innerText = `￥${s.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+    });
 
-    document.getElementById("kpi-pending-count").innerText = stats.pending.count;
-    document.getElementById("kpi-pending-amount").innerText = `￥${stats.pending.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
-
-    document.getElementById("kpi-warning-count").innerText = stats.warning.count;
-    document.getElementById("kpi-warning-amount").innerText = `￥${stats.warning.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
-
-    document.getElementById("kpi-offline-count").innerText = stats.offline.count;
-    document.getElementById("kpi-offline-amount").innerText = `￥${stats.offline.amount.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
-
-    // 更新 Tab 计数
-    const totalCount = stats.matched.count + stats.pending.count + stats.warning.count + stats.offline.count;
-    document.getElementById("tab-all").innerText = `全量台账 (${totalCount})`;
-    document.getElementById("tab-matched").innerText = `配对成功 (${stats.matched.count})`;
-    document.getElementById("tab-pending").innerText = `待申请发票 (${stats.pending.count})`;
-    document.getElementById("tab-warning").innerText = `开票催促预警 (${stats.warning.count})`;
-    document.getElementById("tab-offline").innerText = `非电商/线下票据 (${stats.offline.count})`;
+    // 六 Tab 计数
+    const total = stats.unapplied.count + stats.uninvoiced.count + stats.matched.count + stats.pending_review.count + stats.offline.count;
+    document.getElementById("tab-all").innerText = `全量台账 (${total})`;
+    document.getElementById("tab-unapplied").innerText = `未申请发票 (${stats.unapplied.count})`;
+    document.getElementById("tab-uninvoiced").innerText = `未开发票 (${stats.uninvoiced.count})`;
+    document.getElementById("tab-matched").innerText = `真开票 (${stats.matched.count})`;
+    document.getElementById("tab-pending_review").innerText = `待审核票 (${stats.pending_review.count})`;
+    document.getElementById("tab-offline").innerText = `确认线下 (${stats.offline.count})`;
   } catch (err) {
     console.error("加载真实指标失败:", err);
   }
@@ -111,7 +113,7 @@ async function loadOrdersTable() {
     if (items.length === 0) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="8" style="text-align:center; padding: 48px; color: var(--text-dim);">
+          <td colspan="9" style="text-align:center; padding: 48px; color: var(--text-dim);">
             <div style="font-size: 16px; margin-bottom: 8px;">📭 当前暂无真实对账数据</div>
             <div style="font-size: 12px; color: var(--text-muted);">
               系统将由拟人化浏览器在后台自动采集电商采购订单，或点击右上角 <b style="color:#60a5fa;">【⚡ 立即执行交叉核验】</b> 立即处理。
@@ -119,6 +121,7 @@ async function loadOrdersTable() {
           </td>
         </tr>
       `;
+      updateBulkBar();
       return;
     }
 
@@ -132,18 +135,27 @@ async function loadOrdersTable() {
 
       let statusBadgeClass = item.status;
 
+      // 勾选框：仅待审核票与已确认线下票可勾选 (批量审核动作)
+      const checkable = item.status === "pending_review" || item.status === "offline";
+      const checkboxCell = checkable
+        ? `<td><input type="checkbox" class="row-check" data-rec-id="${item.rec_id}" onchange="updateBulkBar()"></td>`
+        : `<td></td>`;
+
       let actionBtn = "";
       if (item.status === "matched") {
         actionBtn = `<button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="viewRealInvoice('${item.invoice_no}')">查看发票</button>`;
-      } else if (item.status === "pending") {
+      } else if (item.status === "unapplied") {
         actionBtn = `<button class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;" onclick="applyRealInvoice('${item.order_no}')">提报申请</button>`;
-      } else if (item.status === "warning") {
+      } else if (item.status === "uninvoiced") {
         actionBtn = `<button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; color:#f97316;" onclick="urgeRealSeller(${item.rec_id}, '${item.order_no}')">催开(${item.urge_count})</button>`;
+      } else if (item.status === "pending_review") {
+        actionBtn = `<button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="alert('发票 [${item.invoice_no}] 来自税局数电底账，未配上电商订单。请勾选后批量【确认为线下支出】。')">待审核</button>`;
       } else if (item.status === "offline") {
-        actionBtn = `<button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="alert('发票 [${item.invoice_no}] 来源于税局数电底账，为非电商线下支出，已自动入账归类。')">凭证详情</button>`;
+        actionBtn = `<button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="alert('发票 [${item.invoice_no}] 已人工勾选确认为线下支出并留痕。如误勾选可退回待审核。')">凭证详情</button>`;
       }
 
       tr.innerHTML = `
+        ${checkboxCell}
         <td><span class="channel-badge ${channelClass}">${item.channel_name}</span></td>
         <td>
           <div style="font-weight: 600; color: #fff;">${item.order_no}</div>
@@ -159,9 +171,11 @@ async function loadOrdersTable() {
       tbody.appendChild(tr);
     });
 
+    updateBulkBar();
+
   } catch (err) {
     console.error("加载真实对账表失败:", err);
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 36px; color:#ef4444;">连接本地数据库失败</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 36px; color:#ef4444;">连接本地数据库失败</td></tr>`;
   }
 }
 
@@ -172,6 +186,73 @@ function filterByTab(tab) {
   const target = document.getElementById(`tab-${tab}`);
   if (target) target.classList.add("active");
   loadOrdersTable();
+}
+
+// ===== 批量勾选审核（待审核票 → 确认线下 / 误勾退回） =====
+
+function toggleCheckAll(master) {
+  document.querySelectorAll("#invoice-table-body .row-check").forEach(cb => { cb.checked = master.checked; });
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const checked = document.querySelectorAll("#invoice-table-body .row-check:checked");
+  const bar = document.getElementById("bulk-bar");
+  const hint = document.getElementById("bulk-hint");
+  const confirmBtn = document.getElementById("bulk-confirm-btn");
+  const revokeBtn = document.getElementById("bulk-revoke-btn");
+  if (!bar) return;
+
+  if (checked.length === 0) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  hint.innerText = `已选 ${checked.length} 项`;
+
+  // 根据当前 tab 显示对应批量动作
+  confirmBtn.style.display = currentFilter === "pending_review" || currentFilter === "all" ? "" : "none";
+  revokeBtn.style.display = currentFilter === "offline" || currentFilter === "all" ? "" : "none";
+  if (currentFilter === "pending_review") revokeBtn.style.display = "none";
+  if (currentFilter === "offline") confirmBtn.style.display = "none";
+}
+
+async function confirmOfflineSelected() {
+  const ids = [...document.querySelectorAll("#invoice-table-body .row-check:checked")].map(cb => parseInt(cb.dataset.recId));
+  if (ids.length === 0) return;
+  if (!confirm(`确认将勾选的 ${ids.length} 笔税局票【确认为线下支出】？\n确认后将计入线下口径（可退回待审核）。`)) return;
+  try {
+    const res = await fetch("/api/orders/confirm-offline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rec_ids: ids })
+    });
+    const r = await res.json();
+    alert(r.message || (r.success ? "确认成功" : "操作失败"));
+    await Promise.all([loadStats(), loadOrdersTable()]);
+  } catch (err) {
+    console.error("批量确认线下失败:", err);
+    alert("网络错误，操作失败");
+  }
+}
+
+async function revokeOfflineSelected() {
+  const ids = [...document.querySelectorAll("#invoice-table-body .row-check:checked")].map(cb => parseInt(cb.dataset.recId));
+  if (ids.length === 0) return;
+  if (!confirm(`将勾选的 ${ids.length} 笔【退回待审核】？\n误勾选的线下确认将撤销，重新回到待审核清单。`)) return;
+  try {
+    const res = await fetch("/api/orders/revoke-offline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rec_ids: ids })
+    });
+    const r = await res.json();
+    alert(r.message || (r.success ? "退回成功" : "操作失败"));
+    await Promise.all([loadStats(), loadOrdersTable()]);
+  } catch (err) {
+    console.error("批量退回失败:", err);
+    alert("网络错误，操作失败");
+  }
 }
 
 // 搜索事件
@@ -269,6 +350,8 @@ function copyReportText() {
   navigator.clipboard.writeText(latestReportText).then(() => {
     alert("已将真实对账报告 Markdown 复制到剪贴板！");
   });
+}
+
 // 8. 企业开票信息配置
 async function openProfileModal() {
   try {

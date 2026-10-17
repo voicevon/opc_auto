@@ -29,7 +29,12 @@ class RealOpcServerHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             return
         if self.path.startswith("/api/"):
-            status_code, response_data = handle_api_request("GET", self.path, None)
+            try:
+                status_code, response_data = handle_api_request("GET", self.path, None)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                status_code, response_data = 500, {"success": False, "error": f"{type(e).__name__}: {e}"}
             self._send_json(status_code, response_data)
         else:
             super().do_GET()
@@ -38,11 +43,21 @@ class RealOpcServerHandler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/api/"):
             content_length = int(self.headers.get("Content-Length", 0))
             body_bytes = self.rfile.read(content_length) if content_length > 0 else b""
-            status_code, response_data = handle_api_request("POST", self.path, body_bytes)
+            try:
+                status_code, response_data = handle_api_request("POST", self.path, body_bytes)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                status_code, response_data = 500, {"success": False, "error": f"{type(e).__name__}: {e}"}
             self._send_json(status_code, response_data)
         else:
             self.send_response(405)
             self.end_headers()
+
+    def end_headers(self):
+        # 静态资源与 API 一律禁止启发式强缓存，前端更新后刷新即生效
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
 
     def _send_json(self, status_code, data):
         self.send_response(status_code)

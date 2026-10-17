@@ -44,7 +44,7 @@ def init_db():
         channel TEXT NOT NULL,                -- taobao / jd / pdd / offline
         channel_name TEXT NOT NULL,           -- 显示名称如 "淘宝企业购"
         order_no TEXT NOT NULL UNIQUE,        -- 真实业务订单号
-        order_time TEXT NOT NULL,             -- 下单时间 (YYYY-MM-DD HH:MM:SS)
+        order_time TEXT NOT NULL,             -- 真实下单日期 (YYYY-MM-DD，来自平台订单页，非采集时刻)
         item_desc TEXT NOT NULL,              -- 商品/项目明细摘要
         amount REAL NOT NULL,                 -- 交易实付金额 (元)
         seller_name TEXT NOT NULL,            -- 平台店铺名称 / 商户名称
@@ -76,17 +76,18 @@ def init_db():
     )
     """)
 
-    # 4. 真实智能对账核验记录表 (四状态分流)
+    # 4. 真实智能对账核验记录表 (双侧五态: 订单侧未申请/未开发票 + 票侧待审核/确认线下 + 配对成功)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS reconciliation_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER,                     -- 外键，可为 NULL (线下票据无订单)
+        order_id INTEGER,                     -- 外键，可为 NULL (税局票据无订单)
         invoice_id INTEGER,                   -- 外键，可为 NULL (未开票订单无发票)
-        status_category TEXT NOT NULL,        -- matched(状态④) / pending(状态②) / warning(状态③) / offline(状态①)
+        status_category TEXT NOT NULL,        -- unapplied(未申请发票) / uninvoiced(未开发票催办) / pending_review(待审核票) / offline(确认线下) / matched(真开票配对成功)
         status_text TEXT NOT NULL,            -- 中文描述
         diff_amount REAL DEFAULT 0.0,         -- 金额差异
         urge_count INTEGER DEFAULT 0,         -- 催票次数
         last_urge_time TEXT DEFAULT '',       -- 最近一次催票时间
+        confirmed_at TEXT DEFAULT '',         -- 线下人工确认时间 (批量勾选审核留痕，退回时清空)
         reconciled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (order_id) REFERENCES procurement_orders(id),
         FOREIGN KEY (invoice_id) REFERENCES tax_inbound_invoices(id)
@@ -102,10 +103,12 @@ def init_db():
         total_invoices INTEGER DEFAULT 0,
         matched_count INTEGER DEFAULT 0,
         matched_amount REAL DEFAULT 0.0,
-        pending_count INTEGER DEFAULT 0,
-        pending_amount REAL DEFAULT 0.0,
-        warning_count INTEGER DEFAULT 0,
-        warning_amount REAL DEFAULT 0.0,
+        unapplied_count INTEGER DEFAULT 0,    -- 未申请发票订单数
+        unapplied_amount REAL DEFAULT 0.0,
+        uninvoiced_count INTEGER DEFAULT 0,   -- 未开发票订单数 (已申请未配上，催办)
+        uninvoiced_amount REAL DEFAULT 0.0,
+        pending_review_count INTEGER DEFAULT 0, -- 待审核税局票数 (新到未配上)
+        pending_review_amount REAL DEFAULT 0.0,
         offline_count INTEGER DEFAULT 0,
         offline_amount REAL DEFAULT 0.0,
         markdown_content TEXT NOT NULL,       -- 生成的完整 Markdown 日报

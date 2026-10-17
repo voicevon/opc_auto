@@ -4,9 +4,10 @@ OPC Auto RESTful API 路由处理层
 """
 
 import json
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from .database import get_db_connection, DB_PATH
-from .reconciliation_engine import run_reconciliation
+from .reconciliation_engine import run_reconciliation, RECON_LOCK
 from .audit_service import execute_daily_audit, get_latest_report
 
 def handle_api_request(method, path, body_bytes):
@@ -58,9 +59,42 @@ def handle_api_request(method, path, body_bytes):
         traces = AgentTraceLogger.get_latest_traces(limit=limit_val)
         return 200, {"traces": traces, "total": len(traces)}
 
-    # 2. 真实四状态指标数据
+    # 2. 真实五态统计 (纯只读查询，绝不触发对账重建——对账仅在显式触发点执行)
     if route == "/api/stats" and method == "GET":
-        stats = run_reconciliation()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as c FROM procurement_orders")
+        total_orders = cursor.fetchone()["c"]
+        cursor.execute("SELECT COUNT(*) as c FROM tax_inbound_invoices WHERE invoice_state = 'normal'")
+        total_invoices = cursor.fetchone()["c"]
+
+        stats = {
+            "total_orders": total_orders,
+            "total_invoices": total_invoices,
+            "unapplied": {"count": 0, "amount": 0.0},
+            "uninvoiced": {"count": 0, "amount": 0.0},
+            "matched": {"count": 0, "amount": 0.0},
+            "pending_review": {"count": 0, "amount": 0.0},
+            "offline": {"count": 0, "amount": 0.0}
+        }
+        # 订单侧类别金额取订单实付，票侧类别金额取发票面额
+        for cat in ("unapplied", "uninvoiced", "matched"):
+            cursor.execute("""
+            SELECT COUNT(*) as cnt, COALESCE(SUM(o.amount),0.0) as amt
+            FROM reconciliation_records r LEFT JOIN procurement_orders o ON r.order_id = o.id
+            WHERE r.status_category = ?
+            """, (cat,))
+            row = cursor.fetchone()
+            stats[cat] = {"count": row["cnt"], "amount": round(row["amt"], 2)}
+        for cat in ("pending_review", "offline"):
+            cursor.execute("""
+            SELECT COUNT(*) as cnt, COALESCE(SUM(t.total_amount),0.0) as amt
+            FROM reconciliation_records r LEFT JOIN tax_inbound_invoices t ON r.invoice_id = t.id
+            WHERE r.status_category = ?
+            """, (cat,))
+            row = cursor.fetchone()
+            stats[cat] = {"count": row["cnt"], "amount": round(row["amt"], 2)}
+        conn.close()
         return 200, stats
 
     # 3. 真实台账明细查询 (支持按分类状态与搜索词过滤)
@@ -198,13 +232,53 @@ def handle_api_request(method, path, body_bytes):
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-        UPDATE reconciliation_records 
-        SET urge_count = urge_count + 1, last_urge_time = CURRENT_TIMESTAMP 
+        UPDATE reconciliation_records
+        SET urge_count = urge_count + 1, last_urge_time = CURRENT_TIMESTAMP
         WHERE id = ?
         """, (rec_id,))
         conn.commit()
         conn.close()
         return 200, {"success": True, "message": "催票记录已更新"}
+
+    # 9.1 线下票据人工批量确认 (勾选审核留痕；UPDATE+重算持锁原子执行)
+    if route == "/api/orders/confirm-offline" and method == "POST":
+        rec_ids = body.get("rec_ids") or []
+        if not rec_ids:
+            return 400, {"success": False, "message": "未勾选任何记录"}
+        with RECON_LOCK:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in rec_ids)
+            cursor.execute(f"""
+            UPDATE reconciliation_records
+            SET status_category = 'offline', status_text = '已确认线下支出', confirmed_at = ? , reconciled_at = CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders}) AND status_category = 'pending_review'
+            """, [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), *rec_ids])
+            updated = cursor.rowcount
+            conn.commit()
+            conn.close()
+            run_reconciliation()
+        return 200, {"success": True, "updated": updated, "message": f"已确认 {updated} 笔为线下支出"}
+
+    # 9.2 线下确认误操作批量退回待审核 (UPDATE+重算持锁原子执行)
+    if route == "/api/orders/revoke-offline" and method == "POST":
+        rec_ids = body.get("rec_ids") or []
+        if not rec_ids:
+            return 400, {"success": False, "message": "未勾选任何记录"}
+        with RECON_LOCK:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in rec_ids)
+            cursor.execute(f"""
+            UPDATE reconciliation_records
+            SET status_category = 'pending_review', status_text = '待审核 · 未配上订单', confirmed_at = '', reconciled_at = CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders}) AND status_category = 'offline'
+            """, list(rec_ids))
+            updated = cursor.rowcount
+            conn.commit()
+            conn.close()
+            run_reconciliation()
+        return 200, {"success": True, "updated": updated, "message": f"已退回 {updated} 笔至待审核"}
 
     # 10. 读取/保存企业开票抬头配置
     if route == "/api/config/billing":

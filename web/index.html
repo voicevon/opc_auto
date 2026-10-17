@@ -143,60 +143,74 @@
 
       <!-- 四大状态 KPI 指标卡 (100% 真实统计计算，零 hardcode) -->
       <div class="kpi-grid">
-        <!-- 状态④：配对成功 -->
+        <!-- 订单侧③：真开票（闭环） -->
         <div class="kpi-card matched" onclick="filterByTab('matched')">
           <div class="kpi-header">
-            <span class="kpi-title">核对配对成功</span>
-            <span class="kpi-tag">状态 ④ 闭环</span>
+            <span class="kpi-title">真开票</span>
+            <span class="kpi-tag">闭环</span>
           </div>
           <div class="kpi-number-wrap">
             <span class="kpi-count" id="kpi-matched-count">0</span>
             <span class="kpi-count-unit">笔</span>
           </div>
           <div class="kpi-amount" id="kpi-matched-amount">￥0.00</div>
-          <div class="kpi-footer">采购订单与税局进项票完全匹配归档</div>
+          <div class="kpi-footer">订单与税局进项票配对成功归档</div>
         </div>
 
-        <!-- 状态②：待申请发票 -->
-        <div class="kpi-card pending" onclick="filterByTab('pending')">
+        <!-- 订单侧①：未申请发票 -->
+        <div class="kpi-card unapplied" onclick="filterByTab('unapplied')">
           <div class="kpi-header">
-            <span class="kpi-title">电商待申请发票</span>
-            <span class="kpi-tag">状态 ② 催办</span>
+            <span class="kpi-title">未申请发票</span>
+            <span class="kpi-tag">订单侧</span>
           </div>
           <div class="kpi-number-wrap">
-            <span class="kpi-count" id="kpi-pending-count">0</span>
+            <span class="kpi-count" id="kpi-unapplied-count">0</span>
             <span class="kpi-count-unit">笔</span>
           </div>
-          <div class="kpi-amount" id="kpi-pending-amount">￥0.00</div>
-          <div class="kpi-footer">订单已完成，尚未在平台提交开票</div>
+          <div class="kpi-amount" id="kpi-unapplied-amount">￥0.00</div>
+          <div class="kpi-footer">订单已完成，尚未提交开票申请</div>
         </div>
 
-        <!-- 状态③：开票中/超期预警 -->
-        <div class="kpi-card warning" onclick="filterByTab('warning')">
+        <!-- 订单侧②：未开发票（催办） -->
+        <div class="kpi-card uninvoiced" onclick="filterByTab('uninvoiced')">
           <div class="kpi-header">
-            <span class="kpi-title">已申请 / 卖家未开票</span>
-            <span class="kpi-tag">状态 ③ 预警</span>
+            <span class="kpi-title">未开发票</span>
+            <span class="kpi-tag">催办</span>
           </div>
           <div class="kpi-number-wrap">
-            <span class="kpi-count" id="kpi-warning-count">0</span>
+            <span class="kpi-count" id="kpi-uninvoiced-count">0</span>
             <span class="kpi-count-unit">笔</span>
           </div>
-          <div class="kpi-amount" id="kpi-warning-amount">￥0.00</div>
-          <div class="kpi-footer">已提交申请，税局暂无对应发票</div>
+          <div class="kpi-amount" id="kpi-uninvoiced-amount">￥0.00</div>
+          <div class="kpi-footer">已申请但税局底账暂无对应票</div>
         </div>
 
-        <!-- 状态①：线下/其他票据 -->
+        <!-- 票侧①：待审核（新到未配上） -->
+        <div class="kpi-card pending-review" onclick="filterByTab('pending_review')">
+          <div class="kpi-header">
+            <span class="kpi-title">待审核票</span>
+            <span class="kpi-tag">票侧</span>
+          </div>
+          <div class="kpi-number-wrap">
+            <span class="kpi-count" id="kpi-pending-review-count">0</span>
+            <span class="kpi-count-unit">笔</span>
+          </div>
+          <div class="kpi-amount" id="kpi-pending-review-amount">￥0.00</div>
+          <div class="kpi-footer">新到税局票未配上订单，待人工勾选</div>
+        </div>
+
+        <!-- 票侧②：确认线下（人工勾选） -->
         <div class="kpi-card offline" onclick="filterByTab('offline')">
           <div class="kpi-header">
-            <span class="kpi-title">非电商/线下支出票据</span>
-            <span class="kpi-tag">状态 ① 线下</span>
+            <span class="kpi-title">确认线下</span>
+            <span class="kpi-tag">人工已确认</span>
           </div>
           <div class="kpi-number-wrap">
             <span class="kpi-count" id="kpi-offline-count">0</span>
             <span class="kpi-count-unit">笔</span>
           </div>
           <div class="kpi-amount" id="kpi-offline-amount">￥0.00</div>
-          <div class="kpi-footer">加油、餐饮差旅等税局进项票</div>
+          <div class="kpi-footer">加油、差旅等税局进项票，勾选审核留痕</div>
         </div>
       </div>
 
@@ -205,10 +219,16 @@
         <div class="table-toolbar">
           <div class="filter-tabs">
             <button class="tab-btn active" id="tab-all" onclick="filterByTab('all')">全量台账 (0)</button>
-            <button class="tab-btn" id="tab-matched" onclick="filterByTab('matched')">配对成功 (0)</button>
-            <button class="tab-btn" id="tab-pending" onclick="filterByTab('pending')">待申请发票 (0)</button>
-            <button class="tab-btn" id="tab-warning" onclick="filterByTab('warning')">开票催促预警 (0)</button>
-            <button class="tab-btn" id="tab-offline" onclick="filterByTab('offline')">非电商/线下票据 (0)</button>
+            <button class="tab-btn" id="tab-unapplied" onclick="filterByTab('unapplied')">未申请发票 (0)</button>
+            <button class="tab-btn" id="tab-uninvoiced" onclick="filterByTab('uninvoiced')">未开发票 (0)</button>
+            <button class="tab-btn" id="tab-matched" onclick="filterByTab('matched')">真开票 (0)</button>
+            <button class="tab-btn" id="tab-pending_review" onclick="filterByTab('pending_review')">待审核票 (0)</button>
+            <button class="tab-btn" id="tab-offline" onclick="filterByTab('offline')">确认线下 (0)</button>
+          </div>
+          <div id="bulk-bar" class="bulk-bar" style="display:none;">
+            <span id="bulk-hint" class="bulk-hint">已选 0 项</span>
+            <button class="btn btn-primary" id="bulk-confirm-btn" style="display:none; padding: 6px 14px; font-size: 12px;" onclick="confirmOfflineSelected()">✓ 确认为线下支出</button>
+            <button class="btn btn-secondary" id="bulk-revoke-btn" style="display:none; padding: 6px 14px; font-size: 12px; color:#fbbf24;" onclick="revokeOfflineSelected()">↩ 退回待审核</button>
           </div>
 
           <div class="search-box">
@@ -223,6 +243,7 @@
           <table>
             <thead>
               <tr>
+                <th style="width: 34px;"><input type="checkbox" id="check-all" onchange="toggleCheckAll(this)"></th>
                 <th>采购来源</th>
                 <th>业务/订单单号</th>
                 <th>商品/业务摘要</th>

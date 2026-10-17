@@ -39,16 +39,36 @@
       "checked_at": "2026-10-14T02:03:46.475734",
       "trigger_type": "manual",
       "today": "2026-10-14"
+    },
+    {
+      "ok": true,
+      "claimed": false,
+      "credits": 200,
+      "account": "Trae CN",
+      "message": "今日已签到",
+      "checked_at": "2026-10-16T02:04:05.672979",
+      "trigger_type": "manual",
+      "today": "2026-10-16"
+    },
+    {
+      "ok": true,
+      "claimed": true,
+      "credits": 200,
+      "account": "Trae CN",
+      "message": "签到成功",
+      "checked_at": "2026-10-17T02:03:43.965026",
+      "trigger_type": "manual",
+      "today": "2026-10-17"
     }
   ],
   "last_result": {
     "ok": true,
-    "claimed": false,
+    "claimed": true,
     "credits": 200,
     "account": "Trae CN",
-    "message": "今日已签到",
-    "checked_at": "2026-10-14T02:03:46.475734",
+    "message": "签到成功",
+    "checked_at": "2026-10-17T02:03:43.965026",
     "trigger_type": "manual",
-    "today": "2026-10-14"
+    "today": "2026-10-17"
   }
 }

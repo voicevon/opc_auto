@@ -387,6 +387,9 @@ body {
 .kpi-card.pending::before { background: var(--status-pending); }
 .kpi-card.warning::before { background: var(--status-warning); }
 .kpi-card.offline::before { background: var(--status-offline); }
+.kpi-card.unapplied::before { background: var(--status-pending); }
+.kpi-card.uninvoiced::before { background: var(--status-warning); }
+.kpi-card.pending-review::before { background: #a78bfa; }
 
 .kpi-header {
   display: flex;
@@ -405,6 +408,27 @@ body {
 .kpi-card.pending .kpi-tag { background: var(--status-pending-bg); color: var(--status-pending); }
 .kpi-card.warning .kpi-tag { background: var(--status-warning-bg); color: var(--status-warning); }
 .kpi-card.offline .kpi-tag { background: var(--status-offline-bg); color: var(--status-offline); }
+.kpi-card.unapplied .kpi-tag { background: var(--status-pending-bg); color: var(--status-pending); }
+.kpi-card.uninvoiced .kpi-tag { background: var(--status-warning-bg); color: var(--status-warning); }
+.kpi-card.pending-review .kpi-tag { background: rgba(167, 139, 250, 0.15); color: #a78bfa; }
+
+/* 批量勾选审核操作条 */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(167, 139, 250, 0.08);
+}
+.bulk-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a78bfa;
+  white-space: nowrap;
+}
+#invoice-table-body input.row-check { cursor: pointer; accent-color: #a78bfa; }
 
 .kpi-title {
   font-size: 13px;
@@ -578,6 +602,9 @@ tr:hover td {
 .status-badge.pending { background: var(--status-pending-bg); color: var(--status-pending); }
 .status-badge.warning { background: var(--status-warning-bg); color: var(--status-warning); }
 .status-badge.offline { background: var(--status-offline-bg); color: var(--status-offline); }
+.status-badge.unapplied { background: var(--status-pending-bg); color: var(--status-pending); }
+.status-badge.uninvoiced { background: var(--status-warning-bg); color: var(--status-warning); }
+.status-badge.pending_review { background: rgba(167, 139, 250, 0.15); color: #a78bfa; }
 
 .price-cell {
   font-weight: 700;
